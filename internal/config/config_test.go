@@ -23,7 +23,7 @@ func TestValidateAddrOnlyLoopback(t *testing.T) {
 			t.Errorf("ValidateAddr(%q) 应通过，得到 %v", addr, err)
 		}
 	}
-	// 红线 2：非回环与畸形地址必须是 error（调用方据此拒绝启动，不降级）。
+	// 红线 2（=design §五-1）：非回环与畸形地址必须是 error（调用方据此拒绝启动，不降级）。
 	badCases := []string{"0.0.0.0:8080", ":8080", "*:8080", "192.168.1.10:8080", "example.com:80", "127.0.0.1", "127.0.0.1:notaport", "127.0.0.1:70000"}
 	for _, addr := range badCases {
 		if err := ValidateAddr(addr); err == nil {
@@ -144,7 +144,7 @@ func TestLoadRejectsMissingExplicitRoot(t *testing.T) {
 	missing := filepath.Join(base, "nope")
 	_, err := Load(Options{ExplicitRoots: []string{missing}, WorkingDir: base})
 	if err == nil {
-		t.Fatal("显式产物根不存在时必须报错（红线 4：不静默跳过）")
+		t.Fatal("显式产物根不存在时必须报错（红线：roots 缺失即启动失败，不静默跳过）")
 	}
 }
 
@@ -176,7 +176,7 @@ func TestLoadEmptyRootsIsNotAnError(t *testing.T) {
 func TestLoadFlagAddrOverridesAndIsValidated(t *testing.T) {
 	base := t.TempDir()
 	if _, err := Load(Options{WorkingDir: base, Addr: "0.0.0.0:9999"}); err == nil {
-		t.Fatal("--addr 非回环必须拒绝启动（design D-3）")
+		t.Fatal("--addr 非回环必须拒绝启动（design D-3，红线 2）")
 	}
 	cfg, err := Load(Options{WorkingDir: base, Addr: "127.0.0.1:45000"})
 	if err != nil {

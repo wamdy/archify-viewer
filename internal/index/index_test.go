@@ -192,7 +192,50 @@ func TestMetaOutputHonoured(t *testing.T) {
 	}
 	idx, _ := f.scan(t)
 	if idx.Artifacts[0].HTMLName != "deploy.html" {
-		t.Errorf("meta.output 应被当作主件，得到 %q", idx.Artifacts[0].HTMLName)
+		t.Errorf("slug.html 不存在时应采纳 meta.output，得到 %q", idx.Artifacts[0].HTMLName)
+	}
+}
+
+// 评审 QUESTION-1 裁决：文档序是 <slug>.html > meta.output，两者并存时必须由 slug 命中。
+func TestSlugHTMLBeatsMetaOutput(t *testing.T) {
+	f := newFixture(t)
+	dir := f.put(t, "workflow-deploy-20261106-120000", "deploy.html",
+		`{"meta":{"title":"发布流","output":"other.html"}}`, "")
+	if err := os.WriteFile(filepath.Join(dir, "other.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 让 other.html 更新，确保不是靠 mtime 侥幸选中 deploy.html。
+	newer := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "other.html"), newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := f.scan(t)
+	art := idx.Artifacts[0]
+	if art.HTMLName != "deploy.html" {
+		t.Errorf("主件次序应为 <slug>.html 优先，得到 %q", art.HTMLName)
+	}
+	// sidecar 跟随主件名，选错主件会连带把交付态读成 unknown。
+	if art.Delivery != "unknown" {
+		t.Errorf("本例无 sidecar，应为 unknown，得到 %q", art.Delivery)
+	}
+}
+
+// 评审 BLOCK-2：ROOT-UNREADABLE 只能出规则码，原始错误（含根绝对路径）不得进 JSON。
+func TestRootErrorJSONCarriesNoAbsolutePaths(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+	cfg := &config.Config{Roots: []config.Root{{Label: "bad", Path: missing}}}
+	idx, _ := Scan(cfg)
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Roots[0].Err != "ROOT-UNREADABLE" {
+		t.Errorf("Err 应为规则码，得到 %q", idx.Roots[0].Err)
+	}
+	for _, leak := range []string{missing, filepath.VolumeName(missing), t.TempDir()} {
+		if leak != "" && strings.Contains(string(raw), leak) {
+			t.Errorf("响应里泄出绝对路径 %q：%s", leak, raw)
+		}
 	}
 }
 
@@ -319,8 +362,15 @@ func TestJSONExcludesAbsolutePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	if strings.Contains(body, filepath.VolumeName(f.root)) || strings.Contains(body, strings.TrimSuffix(f.root, string(os.PathSeparator))) {
-		t.Errorf("绝对路径泄进 JSON 响应：%s", body)
+	// VolumeName 在 Unix 上是空串，strings.Contains(body, "") 恒真 ⇒ 不加守卫这条测试
+	// 在 Linux/macOS 上必红（评审 SUGGEST；build-dist.sh 要出三平台，不能只在 Windows 绿）。
+	for _, abs := range []string{f.root, filepath.VolumeName(f.root)} {
+		if abs == "" {
+			continue
+		}
+		if strings.Contains(body, strings.TrimSuffix(abs, string(os.PathSeparator))) {
+			t.Errorf("绝对路径泄进 JSON 响应：%s", body)
+		}
 	}
 	if !strings.Contains(body, `"rel_path"`) {
 		t.Error("rel_path 应作为对外唯一路径口径")

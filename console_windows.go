@@ -23,11 +23,15 @@ var (
 
 const (
 	attachParentProcess = ^uint32(0) // ATTACH_PARENT_PROCESS
-	stdInputHandle      = uintptr(0xfffffff5)
-	stdOutputHandle     = uintptr(0xfffffff6)
-	stdErrorHandle      = uintptr(0xfffffff7)
-	mbOK                = 0x0
-	mbIconError         = 0x10
+	// Go 官方定义（syscall/types_windows.go:132-134）：
+	// STD_INPUT_HANDLE=-10、STD_OUTPUT_HANDLE=-11、STD_ERROR_HANDLE=-12。
+	// 转成 uintptr 是 fff6/fff5/fff4 —— 输入与输出只差一位，写反过一次（评审 BLOCK-1），
+	// 反直觉到必须在代码里钉住来历。
+	stdInputHandle  = uintptr(0xfffffff6) // -10
+	stdOutputHandle = uintptr(0xfffffff5) // -11
+	stdErrorHandle  = uintptr(0xfffffff4) // -12
+	mbOK            = 0x0
+	mbIconError     = 0x10
 )
 
 var consoleReady bool

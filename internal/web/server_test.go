@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"archify-viewer/internal/config"
@@ -291,5 +293,54 @@ func TestServerStartRefusesNonLoopbackConfig(t *testing.T) {
 	if err := srv.Start(); err == nil {
 		srv.Shutdown(context.Background())
 		t.Fatal("非回环配置必须启动失败")
+	}
+}
+
+// 评审 QUESTION-4：本机 -race 需要 cgo、无 gcc 跑不了，所以并发面至少要有一条
+// 「并发重扫 × 并发读」的行为测试（不检 data race，但能抓到换快照期间的 nil/脏读崩溃）。
+func TestConcurrentRescanAndReads(t *testing.T) {
+	srv, idx, _, _ := newServer(t)
+	wantID := idx.Artifacts[0].ID
+
+	const workers = 12
+	var wg sync.WaitGroup
+	failures := make(chan string, workers*2)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%3 == 0 {
+				if err := srv.Rescan(); err != nil {
+					failures <- fmt.Sprintf("Rescan: %v", err)
+				}
+				return
+			}
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/index", nil))
+			if rec.Code != http.StatusOK {
+				failures <- fmt.Sprintf("/api/index → %d", rec.Code)
+			}
+			if i%2 == 0 {
+				rec2 := httptest.NewRecorder()
+				srv.Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/a/"+wantID, nil))
+				if rec2.Code != http.StatusOK {
+					failures <- fmt.Sprintf("/a/<id> → %d（重扫期间 ID 不该失效）", rec2.Code)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(failures)
+	for msg := range failures {
+		t.Error(msg)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/index", nil))
+	var after index.Index
+	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Artifacts) != 1 || after.Artifacts[0].ID != wantID {
+		t.Errorf("并发后索引结果漂移：%+v", after.Artifacts)
 	}
 }

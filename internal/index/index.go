@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,7 +54,9 @@ type Artifact struct {
 // HTMLPath 供 desktop/open 使用；不得进入任何 HTTP 响应或默认日志。
 func (a *Artifact) HTMLPath() string { return a.htmlPath }
 
-// RootStatus 是一处产物根的扫描结果。Path 同样不出 JSON。
+// RootStatus 是一处产物根的扫描结果。Path 同样不出 JSON；
+// Err 只放规则码（ROOT-UNREADABLE / ARTIFACT-UNREADABLE: <目录名>），
+// 原始错误串内含根绝对路径，一律只进进程日志（红线 4，评审 BLOCK-2）。
 type RootStatus struct {
 	Label string `json:"label"`
 	Path  string `json:"-"`
@@ -171,7 +174,9 @@ func Scan(cfg *config.Config) (*Index, *Store) {
 		status := RootStatus{Label: root.Label, Path: root.Path}
 		entries, err := os.ReadDir(root.Path)
 		if err != nil {
-			status.Err = err.Error()
+			// 红线 4：/api/index 与界面只出规则码，原始错误（内含根绝对路径）进进程日志。
+			status.Err = "ROOT-UNREADABLE"
+			log.Printf("产物根不可读 %s: %v", root.Path, err)
 			idx.Roots = append(idx.Roots, status)
 			continue
 		}
@@ -185,7 +190,8 @@ func Scan(cfg *config.Config) (*Index, *Store) {
 				if errors.Is(err, errNoHTML) {
 					continue
 				}
-				status.Err = appendUnique(status.Err, fmt.Sprintf("%s: %v", entry.Name(), err))
+				status.Err = appendUnique(status.Err, "ARTIFACT-UNREADABLE: "+entry.Name())
+				log.Printf("产物目录读取失败 %s/%s: %v", root.Path, entry.Name(), err)
 				continue
 			}
 			idx.ParseWarnings += len(warnings)
@@ -236,7 +242,11 @@ func readArtifact(root config.Root, dirName string) (*Artifact, []string, error)
 		warnings = append(warnings, "DIRNAME-UNPARSED")
 	}
 
-	htmlName, extraWarnings := pickHTML(dir, htmls, art.Slug)
+	// candidate 先读：主件选择要用它声明的 meta.output（次序见 selectMainFile 注释）。
+	cand, candWarnings := readCandidate(dir)
+	warnings = append(warnings, candWarnings...)
+
+	htmlName, extraWarnings := selectMainFile(dir, htmls, art.Slug, strings.TrimSpace(cand.Meta.Output))
 	warnings = append(warnings, extraWarnings...)
 	art.HTMLName = htmlName
 	art.htmlPath = filepath.Join(dir, htmlName)
@@ -249,24 +259,12 @@ func readArtifact(root config.Root, dirName string) (*Artifact, []string, error)
 	art.Size = info.Size()
 	art.ModTime = info.ModTime().Unix()
 
-	cand, candWarnings := readCandidate(dir)
-	warnings = append(warnings, candWarnings...)
 	art.Title = strings.TrimSpace(cand.Meta.Title)
 	art.Subtitle = strings.TrimSpace(cand.Meta.Subtitle)
 	art.Quality = strings.TrimSpace(cand.Meta.QualityProfile)
 	art.Repository = normalizeRepository(cand.Meta.Repository)
 	if art.Title == "" {
 		art.Title = art.Slug
-	}
-	// meta.output 是生产者声明的主件名；与选中的 HTML 不一致时以声明为准（若文件存在）。
-	if out := strings.TrimSpace(cand.Meta.Output); out != "" && out != htmlName {
-		if p := filepath.Join(dir, out); fileExists(p) {
-			art.HTMLName = out
-			art.htmlPath = p
-			if info, err := os.Stat(p); err == nil {
-				art.Size, art.ModTime = info.Size(), info.ModTime().Unix()
-			}
-		}
 	}
 
 	delivery, sidecarWarnings := readDelivery(dir, art.HTMLName)
@@ -289,7 +287,13 @@ func parseDirName(name string) (typ, slug, stamp string) {
 }
 
 // pickHTML 优先 <slug>.html（生产者按约定命名主件）；否则单张直取；多张歧义取 mtime 最新并记警告。
-func pickHTML(dir string, htmls []string, slug string) (string, []string) {
+// selectMainFile 定主件，优先级固定（评审 QUESTION-1 裁决：以 AGENTS.md §4 的文档序为准）：
+//
+//  1. <slug>.html            —— 目录名里的 slug 就是产物身份（技能包 SKILL.md:14 的约定）；
+//  2. candidate 的 meta.output —— 生产者显式声明的主件名，仅在 1 落空时生效；
+//  3. 目录内唯一 HTML；
+//  4. mtime 最新一张 + HTML-AMBIGUOUS（同 mtime 按字典序取第一张，保证可重复）。
+func selectMainFile(dir string, htmls []string, slug, declaredOutput string) (string, []string) {
 	if slug != "" {
 		want := slug + ".html"
 		for _, h := range htmls {
@@ -298,10 +302,20 @@ func pickHTML(dir string, htmls []string, slug string) (string, []string) {
 			}
 		}
 	}
+	if declaredOutput != "" {
+		for _, h := range htmls {
+			if strings.EqualFold(h, declaredOutput) {
+				return h, nil
+			}
+		}
+		// 声明名不在顶层 HTML 清单里：只有确实存在该文件时才采纳，避免指到子目录取证件。
+		if fileExists(filepath.Join(dir, declaredOutput)) {
+			return declaredOutput, nil
+		}
+	}
 	if len(htmls) == 1 {
 		return htmls[0], nil
 	}
-	var warnings []string
 	best, bestMod := htmls[0], int64(-1)
 	for _, h := range htmls {
 		info, err := os.Stat(filepath.Join(dir, h))
@@ -312,8 +326,7 @@ func pickHTML(dir string, htmls []string, slug string) (string, []string) {
 			best, bestMod = h, info.ModTime().Unix()
 		}
 	}
-	warnings = append(warnings, "HTML-AMBIGUOUS")
-	return best, warnings
+	return best, []string{"HTML-AMBIGUOUS"}
 }
 
 type candidateDoc struct {

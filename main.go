@@ -315,7 +315,9 @@ func openCmd(args []string) {
 		if err := desktop.OpenFile(abs); err != nil {
 			reportFatal(err)
 		}
-		fmt.Printf("已交给系统默认处理程序: %s\n", abs)
+		// 回显只用 basename：绝对路径是用户自己敲进来的，复读一遍不增加信息，
+		// 却会破坏「仅 --verbose 输出绝对路径」这条口径（评审 QUESTION-2）。
+		fmt.Printf("已交给系统默认处理程序: %s\n", filepath.Base(abs))
 		return
 	}
 

@@ -35,9 +35,11 @@ archify-viewer/
 ├── scripts/build.ps1           # 本机 exe；scripts/build-dist.sh 三平台 + SHA256SUMS
 │
 ├── internal/config/            # ⭐ 三档 roots 发现（--root → 向上找 .archify/ → 配置文件）、addr 回环校验
-│   └── config.go:290           # IsLoopbackHost：localhost / 127.0.0.0/8 / ::1；空 host 不算回环
+│   ├── config.go:198          # IsLoopbackHost：localhost / 127.0.0.0/8 / ::1；空 host 不算回环
+│   └── config.go:180          # ValidateAddr（第一道闸；第二道在 web.Bind）
 ├── internal/index/             # ⭐ 核心：只读扫描 + 解析 + ID 白名单
-│   ├── index.go                # Scan / readArtifact / parseDirName / pickHTML / Store.Find
+│   ├── index.go:165           # Scan / readArtifact / parseDirName / selectMainFile / Store.Find
+│   ├── index.go:296           # selectMainFile：主件优先级 slug.html > meta.output > 单张 > 最新
 │   └── digest.go               # idFor(htmlAbs)[:12]、SHA256File（只读不变性断言用）
 ├── internal/web/               # 只读 HTTP 面
 │   ├── server.go               # mux：GET / 、GET /api/index(?rescan=1)、GET /a/{id}；//go:embed static
@@ -65,10 +67,13 @@ archify-viewer/
 
 ## 4. 数据模型与安全红线
 
-- **产物识别**：`<root>/<dir>` 且该目录顶层有 `*.html` 才算产物（`review-*`、`visual-check` 等取证子目录
-  在下一层，天然被排除）。目录名按 `^(type)-(slug)-(YYYYMMDD-HHMMSS)$` 解析，类型不在 archify 词表内
+- **产物识别**：`<root>/<dir>` 且该目录**顶层**有 `*.html` 才算产物；只扫一层，`review-<n>`、`visual-check`
+  等取证子目录天然被排除（它们在主件的下一层）。目录名按 `^(type)-(slug)-(YYYYMMDD-HHMMSS)$` 解析，类型不在 archify 词表内
   记 `DIRNAME-UNPARSED`。主件优先 `<slug>.html`，其次 `candidate.json` 的 `meta.output`，
-  再其次单张/最新一张（多张歧义记 `HTML-AMBIGUOUS`）。
+  再其次单张/最新一张（多张歧义记 `HTML-AMBIGUOUS`）。次序是硬约定，改动必须有测试钉住。
+- **规则码**：`DIRNAME-UNPARSED` / `CANDIDATE-MISSING` / `CANDIDATE-INVALID` / `SIDECAR-MISSING` /
+  `SIDECAR-INVALID` / `HTML-AMBIGUOUS` / `ROOT-UNREADABLE` / `ARTIFACT-UNREADABLE: <目录名>`。
+  对外只出规则码与目录名，原始错误（内含根绝对路径）只进进程日志。
 - **元数据来源全部来自 archify 既有锚点**：`candidate.json` 的 `meta.{title,subtitle,output,
   quality_profile,repository}`、`<stem>.delivery.json` 的 `status`（`current`/`failed`，缺失=`unknown`）。
   本仓不实现任何校验逻辑。

@@ -4,8 +4,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 )
+
+// describeTarget 让失败信息不带绝对路径（红线 4）：URL 原样保留（回环地址本身不泄密），
+// 文件路径只留 basename——用户想知道是哪个文件，他自己给的参数里就有。
+func describeTarget(target string) string {
+	if strings.Contains(target, "://") {
+		return target
+	}
+	return filepath.Base(target)
+}
 
 // command 是一次外部拉起请求。把 env 单列出来，是为了让 Windows 回落路径
 // 不把用户文件路径插进 PowerShell 命令串（先例：archify 技能包 bin/open-artifact.mjs）。
@@ -37,7 +48,7 @@ func openTarget(target string) error {
 			return nil
 		}
 		if err := run(startFallbackWindows(target)); err != nil {
-			return fmt.Errorf("拉起系统默认处理程序失败（%s）: %w", target, err)
+			return fmt.Errorf("拉起系统默认处理程序失败（%s）: %w", describeTarget(target), err)
 		}
 		return nil
 	case "darwin":
