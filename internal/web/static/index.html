@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archify Viewer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <div>
+      <h1>Archify 产物库</h1>
+      <p class="brand-sub" id="meta">正在读取索引…</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-refresh" class="btn" title="重新扫描产物根（只读，不改动任何文件）">重新扫描</button>
+  </div>
+</header>
+
+<section class="controls">
+  <input id="q" type="search" placeholder="搜索标题 / slug / 目录名…" autocomplete="off">
+  <select id="f-type"><option value="">全部类型</option></select>
+  <select id="f-root"><option value="">全部来源</option></select>
+  <select id="f-sort">
+    <option value="mtime">最新修改</option>
+    <option value="title">标题 A→Z</option>
+    <option value="size">体积大→小</option>
+  </select>
+  <span id="stats" class="stats"></span>
+</section>
+
+<div id="root-errors" class="banner banner-warn" hidden></div>
+
+<main id="grid" class="grid"></main>
+
+<section id="empty" class="empty" hidden>
+  <h2>没有找到产物</h2>
+  <p>archify 把每次交付写到<em>当时工作目录</em>下的 <code>.archify/&lt;type&gt;-&lt;slug&gt;-&lt;YYYYMMDD-HHMMSS&gt;/</code>。</p>
+  <p>本工具按以下顺序找库：<code>--root</code> → 当前目录逐级向上找 <code>.archify/</code> → <code>config.yaml</code> 的 <code>roots</code>。</p>
+  <pre>archify-view list --root D:/design/.archify
+archify-view gui  --root D:/design/.archify --root C:/Users/wamdy/项目/appollo/.archify</pre>
+  <p class="muted">产物为 0 件时，先确认你已在该目录用 archify 交付过图；<span class="muted">刷新不会替你生成产物。</span></p>
+</section>
+
+<footer class="foot">
+  <span>只读浏览 · 不渲染、不校验、不改写产物 · 仅回环监听</span>
+  <span id="generated"></span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

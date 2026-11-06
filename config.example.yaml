@@ -1,0 +1,19 @@
+# archify-viewer 配置样例
+# 查找顺序：当前目录 config.yaml → 用户配置目录/archify-viewer/config.yaml
+# 显式指定：archify-view gui -config D:/path/config.yaml
+
+# 产物根（第三档优先级：仅当没有 -root、也没自动发现命中时使用）
+# path 必须是存在的目录；不存在会直接启动失败，不会静默跳过。
+# label 用于界面分组与溯源（哪个仓/哪台机器），将来共享形态也复用它。
+roots:
+  - path: "D:/design/.archify"
+    label: design
+  - path: "C:/Users/wamdy/项目/appollo/.archify"
+    label: appollo
+
+gui:
+  # 只允许回环地址。填 0.0.0.0 / 局域网 IP / 域名一律拒绝启动：
+  # 本工具无鉴权，而 archify 产物常带真实仓库名、文件路径与 commit SHA。
+  addr: "127.0.0.1:0"   # 端口 0 = 系统分配空闲端口，重复启动互不冲突
+  width: 1440
+  height: 900
