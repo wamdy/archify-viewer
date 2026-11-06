@@ -3,17 +3,21 @@
 // Archify 产物库前端：零构建 vanilla JS，原生窗口与浏览器共用同一份（design D-7）。
 // 只做「读索引 → 列表 → 查看原始 HTML」；不渲染、不校验、不改写产物。
 //
-// 交互契约（本次优化）：
-//   1. 列表 ⇄ 查看在同一文档内切换，location.hash 是视图状态的唯一来源；不新开窗口、
-//      不使用对话框或遮罩层，避免弹窗打断浏览连续性。
+// 交互契约：
+//   1. 列表 ⇄ 查看 ⇄ 设置 三个视图在同一文档内切换，location.hash 是视图状态的唯一来源；
+//      不新开窗口、不使用对话框或遮罩层，避免弹窗打断浏览连续性。
 //   2. iframe.src 仍是 /a/<id> 白名单寻址，字节由服务端原样透传；前端不解析产物内容，
 //      因此「只读产物」「只认 ID」「静态资产白名单」三条红线均不受影响。
 //   3. 状态由 state 单点持有，render() 是唯一渲染入口；加载 / 就绪 / 失败 / 陈旧 /
 //      空库 / 无匹配 六态互斥且各自可恢复，两个横幅职责分离、互不改写样式。
+//   4. 设置改动即时保存（后端只写用户配置文件），成功后再重建索引快照，
+//      目录列表、关闭行为与底部状态提示共用同一份 settings 快照，不各自缓存。
 
 const TIMEOUT_MS = 15000; // 项目约定：API 请求带超时（建议 15s）
 const ID_RE = /^[0-9a-f]{12}$/;
 const HASH_PREFIX = "#a/";
+const SETTINGS_HASH = "#settings";
+const THEME_KEY = "archify-theme";
 
 const state = {
   index: null,
@@ -23,7 +27,7 @@ const state = {
   loading: false,
   seq: 0,
   stale: false,
-  view: "list", // list | viewer
+  view: "list", // list | viewer | settings
   activeId: "",
   loadedId: "",
   viewerSeq: 0,
@@ -32,10 +36,18 @@ const state = {
   listScroll: 0,
   returnFocusId: "",
   autoCleared: [], // 索引刷新时自动失效的筛选条件，合并进同一次提示，避免被后续提示吞掉
+  settings: null,
+  settingsError: "",
+  settingsBusy: false,
+  settingsSeq: 0,
+  theme: (function () { try { return localStorage.getItem(THEME_KEY) || "system"; } catch (_) { return "system"; } })(),
 };
 
 const el = (id) => document.getElementById(id);
 const DELIVERY_LABEL = { current: "已交付", failed: "交付失败", unknown: "未记录" };
+const SOURCE_LABEL = { flag: "启动参数 -root", discover: "自动发现 .archify/", config: "配置文件", none: "未配置" };
+const ORIGIN_LABEL = { flag: "启动参数", discover: "自动发现", config: "配置", none: "临时" };
+const THEME_LABEL = { system: "跟随系统", light: "浅色", dark: "深色" };
 
 function bytes(n) {
   if (!Number.isFinite(n)) return "-";
@@ -90,6 +102,16 @@ function flash(btn, text, kind) {
 
 /* ---------- 数据读取：超时、竞态、陈旧数据标记 ---------- */
 
+function normalizeFetchError(err) {
+  if (err && err.name === "AbortError") {
+    return new Error("请求超时（" + TIMEOUT_MS / 1000 + " 秒），本地服务可能正忙");
+  }
+  if (err instanceof TypeError) {
+    return new Error("无法连接本地服务，请确认 archify-view 仍在运行");
+  }
+  return err;
+}
+
 async function fetchIndex(rescan) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -105,13 +127,27 @@ async function fetchIndex(rescan) {
     }
     return await res.json();
   } catch (err) {
-    if (err && err.name === "AbortError") {
-      throw new Error("请求超时（" + TIMEOUT_MS / 1000 + " 秒），本地服务可能正忙");
+    throw normalizeFetchError(err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// requestJSON 用于设置端点：同一套超时与错误归一化，错误体里的 detail 优先展示给用户。
+async function requestJSON(url, options) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(url, Object.assign({ cache: "no-store" }, options || {}, { signal: ctrl.signal }));
+    let body = null;
+    try { body = await res.json(); } catch (_) { /* 非 JSON 用状态码兜底 */ }
+    if (!res.ok) {
+      const detail = body && (body.detail || body.error);
+      throw new Error((detail || "请求失败") + "（HTTP " + res.status + "）");
     }
-    if (err instanceof TypeError) {
-      throw new Error("无法连接本地服务，请确认 archify-view 仍在运行");
-    }
-    throw err;
+    return body;
+  } catch (err) {
+    throw normalizeFetchError(err);
   } finally {
     clearTimeout(timer);
   }
@@ -264,6 +300,195 @@ function clearFilters() {
   toast("已清除筛选条件", "info");
 }
 
+/* ---------- 主题：首帧已写入，这里只负责运行时切换与按钮状态 ---------- */
+
+function resolveTheme(pref) {
+  if (pref === "light" || pref === "dark") return pref;
+  return (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+}
+
+function applyTheme(pref) {
+  const valid = THEME_LABEL[pref] ? pref : "system";
+  state.theme = valid;
+  if (document.documentElement && document.documentElement.setAttribute) {
+    document.documentElement.setAttribute("data-theme", resolveTheme(valid));
+  }
+  try { localStorage.setItem(THEME_KEY, valid); } catch (_) { /* 隐私模式忽略 */ }
+  renderThemeButtons();
+}
+
+function renderThemeButtons() {
+  ["system", "light", "dark"].forEach((v) => {
+    const b = el("theme-" + v);
+    if (b && b.setAttribute) b.setAttribute("aria-pressed", state.theme === v ? "true" : "false");
+  });
+  const top = el("btn-theme");
+  if (top) top.title = "切换主题（当前：" + (THEME_LABEL[state.theme] || "跟随系统") + "）";
+}
+
+function cycleTheme() {
+  const order = ["system", "light", "dark"];
+  const next = order[(order.indexOf(state.theme) + 1) % order.length] || "system";
+  applyTheme(next);
+  toast("主题：" + THEME_LABEL[next], "info");
+}
+
+/* ---------- 设置：单一快照驱动目录列表 / 关闭行为 / 底部提示 ---------- */
+
+function renderTrayHint() {
+  const hint = el("tray-hint");
+  if (!hint) return;
+  const action = (state.settings && state.settings.close_action) || "tray";
+  const map = {
+    tray: "关闭窗口 → 最小化到托盘，后台继续运行",
+    ask: "关闭窗口 → 每次询问托盘 / 退出",
+    quit: "关闭窗口 → 直接退出",
+  };
+  hint.textContent = map[action] || map.tray;
+}
+
+function renderSettings() {
+  const s = state.settings;
+  if (!s) return;
+  el("settings-source").textContent = SOURCE_LABEL[s.source] || s.source || "—";
+  el("settings-addr").textContent = s.listen_addr || "—";
+  el("settings-config-path").textContent = s.config_path || "—";
+  el("btn-copy-config").dataset.copy = s.config_path || "";
+
+  const err = el("settings-error");
+  err.hidden = !state.settingsError;
+  err.textContent = state.settingsError || "";
+
+  const note = el("settings-priority-note");
+  note.hidden = !s.managed;
+  note.textContent = s.managed
+    ? "当前会话由启动参数或自动发现接管。这里的改动已立即生效并写入配置文件；下次启动时，工作目录里若仍存在 .archify/ 或再次传入 -root，会优先于配置。"
+    : "";
+
+  ["tray", "ask", "quit"].forEach((v) => {
+    const b = el("close-" + v);
+    if (b && b.setAttribute) b.setAttribute("aria-pressed", s.close_action === v ? "true" : "false");
+  });
+
+  const list = el("roots-list");
+  list.innerHTML = "";
+  if (!s.roots || s.roots.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "roots-empty";
+    empty.textContent = "尚未登记目录，索引会是空的。把 .archify 目录路径粘贴到下面即可添加。";
+    list.appendChild(empty);
+  } else {
+    (s.roots || []).forEach((r) => {
+      const row = document.createElement("div");
+      row.className = "root-row";
+      const badge = document.createElement("span");
+      badge.className = "root-badge";
+      badge.textContent = ORIGIN_LABEL[r.origin] || r.origin || "配置";
+      const info = document.createElement("div");
+      info.className = "root-info";
+      const label = document.createElement("strong");
+      label.className = "root-label";
+      label.textContent = r.label || "（未命名）";
+      const p = document.createElement("code");
+      p.className = "root-path";
+      p.textContent = r.path || "";
+      info.appendChild(label);
+      info.appendChild(p);
+      const btn = document.createElement("button");
+      btn.className = "btn btn-quiet btn-sm";
+      btn.dataset.remove = r.path || "";
+      btn.disabled = state.settingsBusy;
+      btn.textContent = "移除";
+      row.appendChild(badge);
+      row.appendChild(info);
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  }
+  renderThemeButtons();
+}
+
+async function loadSettings(silent) {
+  const seq = ++state.settingsSeq;
+  try {
+    const view = await requestJSON("/api/settings");
+    if (seq !== state.settingsSeq) return;
+    state.settings = view;
+    state.settingsError = "";
+  } catch (err) {
+    if (seq !== state.settingsSeq) return;
+    state.settingsError = silent ? "" : message(err);
+    if (!silent) toast("设置读取失败：" + message(err), "err");
+  }
+  renderSettings();
+  renderTrayHint();
+}
+
+function setSettingsBusy(busy) {
+  const add = el("btn-root-add");
+  add.disabled = busy;
+  add.textContent = busy ? "保存中…" : "添加目录";
+  ["tray", "ask", "quit"].forEach((v) => {
+    const b = el("close-" + v);
+    if (b) b.disabled = busy;
+  });
+}
+
+async function postSettings(url, body, okText, onSuccess) {
+  if (state.settingsBusy) return;
+  state.settingsBusy = true;
+  const seq = ++state.settingsSeq;
+  setSettingsBusy(true);
+  try {
+    const view = await requestJSON(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (seq !== state.settingsSeq) return;
+    state.settings = view;
+    state.settingsError = "";
+    renderSettings();
+    renderTrayHint();
+    toast(okText, "ok");
+    if (onSuccess) onSuccess();
+    // 目录变更后立即重建索引，用户不必再点一次「重新扫描」。
+    if (url.indexOf("/roots") >= 0) reload(true);
+  } catch (err) {
+    if (seq !== state.settingsSeq) return;
+    state.settingsError = message(err);
+    renderSettings();
+    toast("设置保存失败：" + state.settingsError, "err");
+  } finally {
+    if (seq === state.settingsSeq) {
+      state.settingsBusy = false;
+      setSettingsBusy(false);
+    }
+  }
+}
+
+function addRoot() {
+  const input = el("root-path");
+  const path = String((input && input.value) || "").trim();
+  if (!path) {
+    toast("请先粘贴一个目录路径", "err");
+    if (input && input.focus) input.focus();
+    return;
+  }
+  postSettings("/api/settings/roots", { action: "add", path }, "目录已添加并重新扫描", () => {
+    if (input) input.value = "";
+  });
+}
+
+function removeRoot(path) {
+  if (!path) return;
+  postSettings("/api/settings/roots", { action: "remove", path }, "目录已移除并重新扫描");
+}
+
+function setCloseAction(value) {
+  postSettings("/api/settings/close-action", { value: value }, "关闭行为已更新");
+}
+
 /* ---------- 状态展示 ---------- */
 
 function metaText(idx) {
@@ -314,7 +539,12 @@ function render() {
   el("meta").textContent = metaText(idx);
   setBusyState();
   renderBanners();
+  renderTrayHint();
   el("grid").setAttribute("aria-busy", state.status === "loading" ? "true" : "false");
+
+  const pill = el("count-pill");
+  pill.hidden = !idx;
+  if (idx) el("count-text").textContent = ((idx.artifacts || []).length) + " 件产物";
 
   if (!idx) {
     // 首屏尚无快照：骨架表示「正在加载」，错误时则由 status-banner 说明原因。
@@ -472,11 +702,28 @@ function showViewer(id) {
   state.activeId = id;
   if (changed) { state.loadedId = ""; state.frameReady = false; }
   el("view-list").hidden = true;
+  el("view-settings").hidden = true;
   el("view-viewer").hidden = false;
   renderViewerMeta();
   ensureViewerLoaded();
   if (window.scrollTo) window.scrollTo(0, 0);
   if (changed && el("btn-back").focus) el("btn-back").focus();
+}
+
+// resetViewer 释放 iframe 与查看态资源；返回列表与进入设置都走它，避免后台脚本继续运行。
+function resetViewer() {
+  state.activeId = "";
+  state.loadedId = "";
+  state.frameReady = false;
+  state.viewerSeq++;
+  clearTimeout(state.frameTimer);
+  const frame = el("frame");
+  frame.onload = null;
+  frame.src = "about:blank";
+  frame.hidden = true;
+  el("viewer-status").hidden = true;
+  el("viewer-error").hidden = true;
+  el("view-viewer").hidden = true;
 }
 
 function restoreFocus() {
@@ -490,22 +737,12 @@ function restoreFocus() {
 }
 
 function showList() {
-  const wasViewer = state.view === "viewer";
+  const wasOther = state.view === "viewer" || state.view === "settings";
   state.view = "list";
-  state.activeId = "";
-  state.loadedId = "";
-  state.frameReady = false;
-  state.viewerSeq++;
-  clearTimeout(state.frameTimer);
-  const frame = el("frame");
-  frame.onload = null;
-  frame.src = "about:blank"; // 释放上一份产物，避免返回列表后后台脚本继续运行
-  frame.hidden = true;
-  el("viewer-status").hidden = true;
-  el("viewer-error").hidden = true;
-  el("view-viewer").hidden = true;
+  resetViewer();
+  el("view-settings").hidden = true;
   el("view-list").hidden = false;
-  if (wasViewer) {
+  if (wasOther) {
     const y = state.listScroll || 0;
     const restore = () => { if (window.scrollTo) window.scrollTo(0, y); };
     if (window.requestAnimationFrame) window.requestAnimationFrame(restore);
@@ -514,6 +751,19 @@ function showList() {
   }
 }
 
+function showSettings() {
+  if (state.view !== "settings") state.listScroll = window.scrollY || 0;
+  state.view = "settings";
+  resetViewer();
+  el("view-list").hidden = true;
+  el("view-settings").hidden = false;
+  if (window.scrollTo) window.scrollTo(0, 0);
+  loadSettings(false);
+  if (el("btn-settings-back").focus) el("btn-settings-back").focus();
+}
+
+/* ---------- hash 路由：三视图共用唯一入口 ---------- */
+
 function parseHash() {
   const h = location.hash || "";
   if (!h.startsWith(HASH_PREFIX)) return "";
@@ -521,10 +771,18 @@ function parseHash() {
   return ID_RE.test(id) ? id : "";
 }
 
-// hash 是视图唯一来源：点击、浏览器前进/后退、手工改地址、刷新深链都走同一个入口。
-function syncViewFromHash() {
+function parseRoute() {
+  const h = location.hash || "";
+  if (h === SETTINGS_HASH || h.startsWith(SETTINGS_HASH + "?")) return { kind: "settings" };
   const id = parseHash();
-  if (id) showViewer(id);
+  return id ? { kind: "viewer", id: id } : { kind: "list" };
+}
+
+// hash 变化必然触发 hashchange；不另听 popstate，避免同一次导航被派发两遍。
+function syncViewFromHash() {
+  const r = parseRoute();
+  if (r.kind === "settings") showSettings();
+  else if (r.kind === "viewer") showViewer(r.id);
   else showList();
 }
 
@@ -539,6 +797,16 @@ function openViewer(id) {
 function backToList() {
   if (location.hash) location.hash = "";
   showList(); // 直接切回，不依赖 hashchange 的异步派发；随后的 hashchange 会幂等复调一次
+}
+
+function openSettings() {
+  if (location.hash !== SETTINGS_HASH) location.hash = SETTINGS_HASH;
+  showSettings();
+}
+
+function backFromSettings() {
+  if (location.hash) location.hash = "";
+  showList();
 }
 
 /* ---------- 复制：主路径 + 兼容降级 ---------- */
@@ -597,14 +865,38 @@ function onViewerClick(e) {
   else if (t.dataset.action === "copy") doCopy(t.dataset.copy, t);
 }
 
+function onSettingsClick(e) {
+  const t = targetFor(e, "[data-remove],[data-close-action],[data-theme],[data-action]");
+  if (!t) return;
+  if (t.dataset.remove !== undefined) removeRoot(t.dataset.remove);
+  else if (t.dataset.closeAction) setCloseAction(t.dataset.closeAction);
+  else if (t.dataset.theme) applyTheme(t.dataset.theme);
+  else if (t.dataset.action === "copy") {
+    doCopy(t.dataset.copy || (state.settings && state.settings.config_path) || "", t);
+  }
+}
+
 function onKeyDown(e) {
   const t = e.target || {};
   const tag = String(t.tagName || "").toLowerCase();
   const editing = tag === "input" || tag === "textarea" || tag === "select" || !!t.isContentEditable;
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+    if (state.view === "settings") {
+      if (e.preventDefault) e.preventDefault();
+      addRoot();
+    }
+    return;
+  }
   if (e.key === "Escape") {
     if (state.view === "viewer") {
       if (e.preventDefault) e.preventDefault();
       backToList();
+      return;
+    }
+    if (state.view === "settings") {
+      if (e.preventDefault) e.preventDefault();
+      backFromSettings();
       return;
     }
     const q = el("q");
@@ -614,7 +906,12 @@ function onKeyDown(e) {
     }
     return;
   }
-  // 只在非输入上下文、列表视图下抢焦点，避免打断输入 / 查看态的快捷键。
+  // 只在非输入上下文抢焦点，避免打断输入。
+  if (e.key === "," && !editing && !e.ctrlKey && !e.metaKey && !e.altKey && state.view !== "settings") {
+    if (e.preventDefault) e.preventDefault();
+    openSettings();
+    return;
+  }
   if (e.key === "/" && !editing && !e.ctrlKey && !e.metaKey && !e.altKey && state.view === "list") {
     if (e.preventDefault) e.preventDefault();
     const q = el("q");
@@ -630,18 +927,28 @@ function bind() {
   el("f-sort").addEventListener("change", (e) => { state.sort = (e.target && e.target.value) || "mtime"; render(); });
   el("btn-refresh").addEventListener("click", () => { reload(true); });
   el("btn-empty-rescan").addEventListener("click", () => { reload(true); });
+  el("btn-empty-settings").addEventListener("click", openSettings);
   el("btn-retry").addEventListener("click", () => { reload(!!state.index); });
   el("btn-clear").addEventListener("click", clearFilters);
   el("btn-clear-2").addEventListener("click", clearFilters);
   el("btn-back").addEventListener("click", backToList);
   el("btn-viewer-retry").addEventListener("click", () => { state.loadedId = ""; ensureViewerLoaded(); });
+  el("btn-settings").addEventListener("click", openSettings);
+  el("btn-theme").addEventListener("click", cycleTheme);
+  el("btn-settings-back").addEventListener("click", backFromSettings);
+  el("btn-root-add").addEventListener("click", addRoot);
+  el("root-path").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { if (e.preventDefault) e.preventDefault(); addRoot(); }
+  });
   el("grid").addEventListener("click", onGridClick);
   el("view-viewer").addEventListener("click", onViewerClick);
+  el("view-settings").addEventListener("click", onSettingsClick);
   document.addEventListener("keydown", onKeyDown);
-  // hash 变化必然触发 hashchange；不另听 popstate，避免同一次导航被派发两遍。
   window.addEventListener("hashchange", syncViewFromHash);
 }
 
 bind();
+applyTheme(state.theme);
 syncViewFromHash();
+loadSettings(true); // 只用于底部关闭行为提示；失败时静默，不打扰首屏
 reload(false);

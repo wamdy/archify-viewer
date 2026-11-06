@@ -1,6 +1,7 @@
-// Package web 提供 archify-viewer 的只读 HTTP 面：一份 SPA、一个索引端点、一个按 ID 取产物的端点。
+// Package web 提供 archify-viewer 的 HTTP 面：一份 SPA、索引端点、按 ID 取产物的端点，
+// 以及设置页的读/写端点。产物面仍然只读；设置只写用户配置文件，且写入实现留在 internal/config。
 //
-// 不提供目录列举、不提供按路径取文件、不改写任何产物（tasks.md 四-1/四-2/四-6）。
+// 不提供目录列举、不提供按路径取产物、不改写任何产物（tasks.md 四-1/四-2/四-6）。
 package web
 
 import (
@@ -27,6 +28,15 @@ import (
 //go:embed static
 var embedded embed.FS
 
+// Option 是构造期的可选能力注入。设置编辑器只在 gui/run 形态装配，
+// httptest 与纯只读用法不传，旧调用点无需改动。
+type Option func(*Server)
+
+// WithSettings 注入设置编辑器；不注入时三个设置端点返回 503（能力未装配，而不是伪装成功）。
+func WithSettings(st SettingsStore) Option {
+	return func(s *Server) { s.settings = st }
+}
+
 // Server 复用同一份 embed 资产：原生 WebView 与系统浏览器看到的 UI 必须完全一致（impact R-4）。
 type Server struct {
 	cfg      *config.Config
@@ -38,19 +48,26 @@ type Server struct {
 	idx   *index.Index
 	store *index.Store
 
+	settings SettingsStore
+
 	srv *http.Server
 	ln  net.Listener
 	url string
 }
 
 // New 构造服务；不监听、不启动。
-func New(cfg *config.Config, idx *index.Index, store *index.Store) (*Server, error) {
+func New(cfg *config.Config, idx *index.Index, store *index.Store, opts ...Option) (*Server, error) {
 	sub, err := fs.Sub(embedded, "static")
 	if err != nil {
 		// embed 模式编译期校验，运行期不可能失败。
 		return nil, fmt.Errorf("内嵌资产解包失败: %w", err)
 	}
 	s := &Server{cfg: cfg, idx: idx, store: store, staticFS: sub, etag: map[string]string{}}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
 	for _, name := range assetNames {
 		raw, err := fs.ReadFile(sub, name)
 		if err != nil {
@@ -63,13 +80,16 @@ func New(cfg *config.Config, idx *index.Index, store *index.Store) (*Server, err
 	return s, nil
 }
 
-// 静态资产白名单：只这三份，其余路径一律 404（不提供服务目录列举）。
-var assetNames = []string{"index.html", "app.js", "style.css"}
+// 静态资产白名单：只这四份，其余路径一律 404（不提供服务目录列举）。
+var assetNames = []string{"index.html", "app.js", "style.css", "favicon.svg"}
 
 func (s *Server) router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/index", s.handleIndex)
 	mux.HandleFunc("GET /a/{id}", s.handleArtifact)
+	mux.HandleFunc("GET /api/settings", s.handleSettings)
+	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
+	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return mux
 }
@@ -118,8 +138,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 // Rescan 重新扫描产物根并替换索引快照（仍然只读）。
-// 有意为之：一次会话里 archify 可能刚交付新图，让人重启进程才能看到是体验缺陷；
-// 但它不改任何文件、也不引入写面，红线 1 不受影响。
+// 有意为之：一次会话里 archify 可能刚交付新图，或用户刚在设置页改了目录；
+// 但它不改任何产物文件、也不引入写面，红线 1 不受影响。
 func (s *Server) Rescan() error {
 	idx, store := index.Scan(s.cfg)
 	s.mu.Lock()
@@ -196,6 +216,8 @@ func contentTypeOf(name string) string {
 		return "text/javascript; charset=utf-8"
 	case "style.css":
 		return "text/css; charset=utf-8"
+	case "favicon.svg":
+		return "image/svg+xml"
 	default:
 		return "text/html; charset=utf-8"
 	}

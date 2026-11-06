@@ -159,6 +159,24 @@ func logIndex(idx *index.Index) {
 	}
 }
 
+// newSettingsEditor 装配设置编辑器；失败只降级「自定义目录」能力，不阻断查看器启动。
+func newSettingsEditor(cfg *config.Config, explicit string) *config.Editor {
+	editor, err := config.NewEditor(cfg, explicit)
+	if err != nil {
+		log.Printf("设置编辑器不可用（自定义目录功能将不可用）: %v", err)
+		return nil
+	}
+	return editor
+}
+
+// settingsOption 把编辑器注入 HTTP 面；nil 时返回 nil Option，web.New 会忽略。
+func settingsOption(editor *config.Editor) web.Option {
+	if editor == nil {
+		return nil
+	}
+	return web.WithSettings(editor)
+}
+
 func guiCmd(args []string) {
 	fs, lf := newFlagSet("gui")
 	_ = fs.Parse(args)
@@ -166,7 +184,8 @@ func guiCmd(args []string) {
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
 
-	srv, err := web.New(cfg, idx, store)
+	editor := newSettingsEditor(cfg, lf.configPath)
+	srv, err := web.New(cfg, idx, store, settingsOption(editor))
 	if err != nil {
 		reportFatal(err)
 	}
@@ -199,7 +218,25 @@ func guiCmd(args []string) {
 		runtime.LockOSThread()
 		win, werr := desktop.New("Archify 产物库", url, cfg.GUI.Width, cfg.GUI.Height)
 		if werr == nil {
+			// 关闭行为每次 WM_CLOSE 都重新读配置，设置页修改后无需重启。
+			// 托盘「退出」必须经 win.Close() → Dispatch(Terminate) 回到 UI 线程，不能直接 Quit。
+			if terr := win.EnableTray(desktop.TrayOptions{
+				Behavior: func() desktop.CloseBehavior {
+					return desktop.ParseCloseBehavior(cfg.CloseActionValue())
+				},
+				OnQuit: func() { win.Close() },
+				OnRescan: func() {
+					if err := srv.Rescan(); err != nil {
+						log.Printf("托盘触发重新扫描失败: %v", err)
+					} else {
+						log.Printf("托盘触发重新扫描完成")
+					}
+				},
+			}); terr != nil {
+				log.Printf("系统托盘不可用，关闭窗口将直接退出: %v", terr)
+			}
 			win.Run()
+			desktop.RemoveTray()
 			shutdown()
 			return
 		}
@@ -222,7 +259,7 @@ func runCmd(args []string) {
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
 
-	srv, err := web.New(cfg, idx, store)
+	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)))
 	if err != nil {
 		reportFatal(err)
 	}

@@ -27,29 +27,43 @@
 
 ```
 archify-viewer/
-├── main.go                     # CLI 入口（gui/run/list/open/version）
-├── console_windows.go          # AttachConsole（-H windowsgui 下 CLI 仍可打印，只用 stdlib syscall）
+├── main.go                     # CLI 入口（gui/run/list/open/version）+ 设置编辑器与托盘装配
+├── console_windows.go          # AttachConsole / AllocConsole；无控制台时启动失败弹 MessageBox
 ├── console_other.go
-├── go.mod                      # module archify-viewer；依赖仅 go-webview2(+winloader/x/sys 间接) 与 yaml.v3
+├── go.mod                      # 依赖：go-webview2、yaml.v3、x/sys/windows（纯 Win32 托盘）；winloader 间接
 ├── config.example.yaml
-├── scripts/build.ps1           # 本机 exe；scripts/build-dist.sh 三平台 + SHA256SUMS
+├── assets/                     # icon.svg（源）/ icon.ico（生成）/ windows.manifest（DPI + 长路径）
+├── rsrc_windows_amd64.syso     # 生成：COFF .rsrc，RT_MANIFEST=1 / RT_GROUP_ICON=2 / RT_ICON=3..6
+├── rsrc_windows_arm64.syso
+├── scripts/
+│   ├── gen-icon.go             # //go:build ignore；纯标准库生成 ICO + 两份 .syso
+│   ├── build.ps1               # 本机 exe（-ldflags "-s -w -H windowsgui"）
+│   └── build-dist.sh           # 三平台 + SHA256SUMS
 │
-├── internal/config/            # ⭐ 三档 roots 发现（--root → 向上找 .archify/ → 配置文件）、addr 回环校验
-│   ├── config.go:198          # IsLoopbackHost：localhost / 127.0.0.0/8 / ::1；空 host 不算回环
-│   └── config.go:180          # ValidateAddr（第一道闸；第二道在 web.Bind）
+├── internal/config/
+│   ├── config.go               # 三档 roots 发现、ValidateAddr/IsLoopbackHost、运行时 RWMutex 快照
+│   └── settings.go             # ⭐ 全仓唯一写面：Editor（原子写 config.yaml + 即时生效）
 ├── internal/index/             # ⭐ 核心：只读扫描 + 解析 + ID 白名单
-│   ├── index.go:165           # Scan / readArtifact / parseDirName / selectMainFile / Store.Find
-│   ├── index.go:296           # selectMainFile：主件优先级 slug.html > meta.output > 单张 > 最新
+│   ├── index.go                # Scan / readArtifact / parseDirName / selectMainFile / Store.Find
 │   └── digest.go               # idFor(htmlAbs)[:12]、SHA256File（只读不变性断言用）
-├── internal/web/               # 只读 HTTP 面
-│   ├── server.go               # mux：GET / 、GET /api/index(?rescan=1)、GET /a/{id}；//go:embed static
+├── internal/web/               # HTTP 面（产物只读 + 设置端点）
+│   ├── server.go               # mux：GET / 、/api/index(?rescan=1)、/a/{id}、/api/settings*；//go:embed static
+│   ├── settings.go             # SettingsStore 接口 + 三个设置端点；包内不得出现写文件调用
 │   ├── listen.go               # Bind：非回环返回 error（拒绝启动，不降级）
-│   └── static/                 # ⭐ 前端：零构建 vanilla JS（index.html / app.js / style.css）
-└── internal/desktop/           # window_windows.go(WebView2) / window_stub.go(ErrUnsupported) / open.go
+│   └── static/                 # ⭐ 前端：零构建 vanilla JS（index.html / app.js / style.css / favicon.svg）
+└── internal/desktop/
+    ├── window_windows.go       # WebView2 窗口（NewWithOptions / IconId=2 / Dispatch(Terminate)）
+    ├── window_stub.go          # 非 Windows stub
+    ├── tray.go / tray_stub.go  # 关闭行为三态与平台无关模型
+    ├── tray_windows.go         # 纯 Win32 Shell_NotifyIconW + WM_CLOSE 子类化
+    └── open.go
 ```
 
 分层约束：`internal/index` 不 import `net/http`；`internal/web` 与 `internal/index` 里不得出现任何写
-文件系统调用（`os.WriteFile`/`Remove`/`Rename`/`MkdirAll`）。
+文件系统调用（`os.WriteFile`/`Remove`/`Rename`/`MkdirAll`）。配置写入只允许在
+`internal/config.Editor`：`web` 只依赖 `SettingsStore` 接口，产物目录与用户配置文件严格隔离。
+运行期可变的 `Roots` / `RootSource` / `GUI.CloseAction` 由 `config.Config` 的 `RWMutex` 保护，
+`index.Scan` 必须走 `RootSnapshot()` / `Source()`，不得裸读字段（设置页与扫描会并发）。
 
 ---
 
@@ -85,6 +99,14 @@ archify-viewer/
   不静默换端口。
 - **缓存**：所有响应 `Cache-Control: no-store`（产物自带 hash 深链，串台缓存会误导人）。
 - 超时：`ReadHeaderTimeout=5s`、`WriteTimeout=60s`、`IdleTimeout=30s`。
+- **设置写面**：`GET /api/settings`、`POST /api/settings/roots`、`POST /api/settings/close-action`
+  只在 `gui` / `run` 装配，未装配返回 503（能力缺失不伪装成功）。请求体限 1 MiB；
+  保存用 `CreateTemp` + `Sync` + `Rename` + `Chmod(0600)`，**先落盘再改运行态**，
+  成功后 `srv.Rescan()` 立即重建索引。路径只作为字符串校验「目录存在」，不新增任何按路径取文件的能力。
+- **Windows 资源与子系统**：`-H windowsgui` 保证双击无控制台黑窗；`console_windows.go` 让 CLI
+  调用仍可打印、启动失败无控制台时弹 MessageBox（不静默退出）。`.syso` 资源 ID 是硬约定：
+  `RT_MANIFEST=1`、`RT_GROUP_ICON=2`（窗口 `IconId=2` 与托盘 `LoadImageW(2)` 共用）、`RT_ICON=3..6`。
+  改 `assets/` 后必须重跑 `go run scripts/gen-icon.go` 并提交生成物，`go build` 才会链进 exe。
 
 ---
 
@@ -96,14 +118,20 @@ archify-viewer/
 | `CGO_ENABLED=0 go build ./...` | 依赖面不碰 CGO（原生窗口只在 Windows 且免 CGO） | ✅ |
 | `go vet ./...` | 静态检查 | ✅ |
 | `go test ./...` | 全量单测（fixture 全用 `t.TempDir()`，无外部依赖） | ✅ |
-| `go test -race ./...` | 并发路径（Rescan 换快照 × 请求读） | ✅ 改 web/index 时 |
+| `go test -race ./...` | 并发路径（Rescan 换快照 × 请求读、设置页 × `index.Scan`） | ✅ 改 web/index 时；本机无 gcc / `CGO_ENABLED=0` 时须**显式登记未覆盖**，不得用普通 `go test` 冒充 |
 | `node --check internal/web/static/app.js` | **前端唯一静态门**（无打包器、无 JS 测试框架） | ✅ 改 static/ 时 |
 | `gofmt -l .` | 输出必须为空 | ✅ |
+| `go run scripts/gen-icon.go` | 改 `assets/icon.svg` / `windows.manifest` 后重生 ICO 与 `.syso` | ✅ 改图标/清单时 |
 
 出 Windows 产物：`powershell -File scripts/build.ps1` → `build/archify-view-windows-amd64.exe`
 （`-ldflags "-s -w -H windowsgui"`，`build/` 已 gitignore）。改了 `internal/web/static/` 之后
 **必须重新 `go build` 再跑二进制**才能验证界面行为——静态资源经 `//go:embed` 编进二进制，
 `node --check` 只证语法、不证渲染。
+
+GUI 子系统与图标的机器可验证口径：解析 PE `OptionalHeader.Subsystem == 2`（`WINDOWS_GUI`）、
+`.rsrc` 存在、资源树含 `RT_ICON/RT_GROUP_ICON/RT_MANIFEST`、`RT_GROUP_ICON` 含 ID 2、
+图标 PNG 字节确实嵌进 exe。前端交互则用 Node `vm` + 最小 DOM 桩加载真实 `app.js` 做状态流转断言，
+再用真实二进制起回环服务做 HTTP 全链路；这三者都**不能替代**托盘/窗口的 GUI 人工走查。
 
 ---
 
@@ -118,7 +146,15 @@ JSON 无绝对路径、一处根不可读不影响其余、`Find` 的 ID/前缀/
 端口占用显式失败、真实 HTTP 请求字节一致。`internal/desktop` 覆盖拉起命令构造、
 **目标路径经环境变量传递而不进命令串**（注入面）、`ErrUnsupported` 可被 `errors.Is` 判定。
 
+`internal/config` 另覆盖 `NormalizeCloseAction`、Editor 增删/持久化/保留手写 GUI 字段/原子写、
+`RootSnapshot` 副本隔离；`internal/web` 另覆盖设置端点未装配时 503、增删根目录立即重扫、
+非法输入不写坏配置、关闭行为运行时生效、favicon 白名单、设置视图不把路径泄漏进 `/api/index`；
+`internal/desktop` 另覆盖 `ParseCloseBehavior` 三态与未知值回落。
+
 **没有浏览器级 UI 自动化**——界面改动靠构建产物人工走查留证（主仓 `harness/.../06_test/`）。
+自动化部分由「DOM 桩状态探针 + 真实进程 HTTP 全链路 + PE 结构解析」承担，
+托盘图标、气泡、右键菜单、双击恢复等 Win32 交互仍属人工门，不得用 `docker compose ps healthy`
+或 `go test` 绿来冒充已验证。
 
 ---
 
@@ -132,3 +168,8 @@ JSON 无绝对路径、一处根不可读不影响其余、`Find` 的 ID/前缀/
   本仓只消费其**目录/sidecar 约定**，不 import、不依赖其运行时。
 - 形态先例：`code/tools/ssh-tunnel-ui`（多形态 CLI + 原生窗口回退 + embed 前端）、
   `code/tools/jsonl-table-viewer`（回环监听 + 白名单 + 端口占用即退出）。
+- 借用 `ssh-tunnel-ui` 的成熟做法：纯 Win32 托盘（隐藏窗口 + `Shell_NotifyIconW` + 主窗口
+  `WM_CLOSE` 子类化）、关闭行为三态、配置原子写与 0600、设置 API/设置页、首帧前写 `data-theme`、
+  退出经 `Dispatch(Terminate)` 回 UI 线程、页面内自绘确认不依赖原生弹窗。
+  **有意不借**它的非回环监听回落/告警：本工具无鉴权，非回环一律拒绝启动；
+  关闭行为默认也从「每次询问」改为 `tray`——本机查看器没有需要用户确认的后台连接。
