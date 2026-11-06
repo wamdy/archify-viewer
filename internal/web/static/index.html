@@ -9,46 +9,114 @@
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark">◈</span>
+    <span class="brand-mark" aria-hidden="true">◈</span>
     <div>
       <h1>Archify 产物库</h1>
-      <p class="brand-sub" id="meta">正在读取索引…</p>
+      <p class="brand-sub" id="meta" role="status" aria-live="polite">正在读取索引…</p>
     </div>
   </div>
   <div class="topbar-actions">
-    <button id="btn-refresh" class="btn" title="重新扫描产物根（只读，不改动任何文件）">重新扫描</button>
+    <span id="freshness" class="freshness" hidden></span>
+    <button id="btn-refresh" class="btn" title="重新扫描产物根（只读，不改动任何文件）">
+      <span class="spinner" id="refresh-spinner" aria-hidden="true" hidden></span>
+      <span id="refresh-label">重新扫描</span>
+    </button>
   </div>
 </header>
 
-<section class="controls">
-  <input id="q" type="search" placeholder="搜索标题 / slug / 目录名…" autocomplete="off">
-  <select id="f-type"><option value="">全部类型</option></select>
-  <select id="f-root"><option value="">全部来源</option></select>
-  <select id="f-sort">
-    <option value="mtime">最新修改</option>
-    <option value="title">标题 A→Z</option>
-    <option value="size">体积大→小</option>
-  </select>
-  <span id="stats" class="stats"></span>
-</section>
+<!-- 全局状态条：两个横幅职责分离，互不改写样式（修复「错误后残留红底」）。 -->
+<div class="global-banners">
+  <div id="status-banner" class="banner banner-error" role="alert" hidden>
+    <span id="status-text"></span>
+    <button id="btn-retry" class="btn btn-sm">重试</button>
+  </div>
+  <div id="root-errors" class="banner banner-warn" hidden></div>
+</div>
 
-<div id="root-errors" class="banner banner-warn" hidden></div>
+<!-- 列表视图 -->
+<div id="view-list">
+  <section class="controls">
+    <input id="q" type="search" placeholder="搜索标题 / slug / 目录名…" autocomplete="off" aria-label="搜索产物">
+    <select id="f-type" data-head="全部类型" aria-label="按类型筛选"><option value="">全部类型</option></select>
+    <select id="f-root" data-head="全部来源" aria-label="按来源筛选"><option value="">全部来源</option></select>
+    <select id="f-sort" aria-label="排序方式">
+      <option value="mtime">最新修改</option>
+      <option value="title">标题 A→Z</option>
+      <option value="size">体积大→小</option>
+    </select>
+    <button id="btn-clear" class="btn btn-quiet" hidden>清除筛选</button>
+    <span id="stats" class="stats" role="status" aria-live="polite"></span>
+  </section>
 
-<main id="grid" class="grid"></main>
+  <main id="grid" class="grid" aria-busy="true" hidden></main>
 
-<section id="empty" class="empty" hidden>
-  <h2>没有找到产物</h2>
-  <p>archify 把每次交付写到<em>当时工作目录</em>下的 <code>.archify/&lt;type&gt;-&lt;slug&gt;-&lt;YYYYMMDD-HHMMSS&gt;/</code>。</p>
-  <p>本工具按以下顺序找库：<code>--root</code> → 当前目录逐级向上找 <code>.archify/</code> → <code>config.yaml</code> 的 <code>roots</code>。</p>
-  <pre>archify-view list --root D:/design/.archify
+  <!-- 首屏骨架：明确「正在加载」，避免大块空白被误读成空库。 -->
+  <div id="skeleton" class="grid" aria-hidden="true">
+    <div class="card skeleton-card"><span class="sk sk-tag"></span><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span><span class="sk sk-btn"></span></div>
+    <div class="card skeleton-card"><span class="sk sk-tag"></span><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span><span class="sk sk-btn"></span></div>
+    <div class="card skeleton-card"><span class="sk sk-tag"></span><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span><span class="sk sk-btn"></span></div>
+  </div>
+
+  <section id="empty" class="empty" hidden>
+    <h2>没有找到产物</h2>
+    <p>archify 把每次交付写到<em>当时工作目录</em>下的 <code>.archify/&lt;type&gt;-&lt;slug&gt;-&lt;YYYYMMDD-HHMMSS&gt;/</code>。</p>
+    <p>本工具按以下顺序找库：<code>--root</code> → 当前目录逐级向上找 <code>.archify/</code> → <code>config.yaml</code> 的 <code>roots</code>。</p>
+    <pre>archify-view list --root D:/design/.archify
 archify-view gui  --root D:/design/.archify --root C:/Users/wamdy/项目/appollo/.archify</pre>
-  <p class="muted">产物为 0 件时，先确认你已在该目录用 archify 交付过图；<span class="muted">刷新不会替你生成产物。</span></p>
+    <p class="muted">产物为 0 件时，先确认你已在该目录用 archify 交付过图；刷新不会替你生成产物。</p>
+    <p><button id="btn-empty-rescan" class="btn">重新扫描产物根</button></p>
+  </section>
+
+  <!-- 筛选无结果：旧实现整页空白，用户会以为工具坏了。 -->
+  <section id="no-match" class="empty" hidden>
+    <h2>没有符合条件的产物</h2>
+    <p id="no-match-detail" class="muted"></p>
+    <p>条件收得太紧时，可以一键清空后重新筛选。</p>
+    <p><button id="btn-clear-2" class="btn">清除筛选条件</button></p>
+  </section>
+</div>
+
+<!-- 查看视图：同一文档内切换，不是弹窗、不是模态层、不新开窗口。
+     iframe 的 src 仍是 /a/<id> 白名单寻址，字节由服务端原样透传；前端不解析、不改写产物。 -->
+<section id="view-viewer" class="viewer" hidden aria-label="产物查看">
+  <div class="viewer-bar">
+    <button id="btn-back" class="btn">← 返回列表 <kbd class="kbd">Esc</kbd></button>
+    <div class="viewer-title">
+      <div id="viewer-tags" class="card-head"></div>
+      <h2 id="viewer-name">正在读取索引…</h2>
+      <p id="viewer-path" class="card-path"></p>
+    </div>
+    <div class="viewer-actions">
+      <button class="btn" data-action="copy" id="btn-copy-link" disabled>复制深链</button>
+      <button class="btn" data-action="copy" id="btn-copy-id" disabled>复制 ID</button>
+      <a id="btn-newtab" class="btn" target="_blank" rel="noopener" hidden>在新标签打开 ↗</a>
+    </div>
+  </div>
+
+  <div class="viewer-stage">
+    <div id="viewer-status" class="stage-state" role="status" aria-live="polite" hidden>
+      <span class="spinner spinner-lg" aria-hidden="true"></span>
+      <span id="viewer-status-text">正在载入产物…</span>
+    </div>
+    <div id="viewer-error" class="stage-state stage-error" role="alert" hidden>
+      <p id="viewer-error-text"></p>
+      <div class="stage-actions">
+        <button id="btn-viewer-retry" class="btn">重试</button>
+        <a id="btn-error-newtab" class="btn" target="_blank" rel="noopener" hidden>在新标签打开 ↗</a>
+        <button class="btn btn-quiet" data-action="back">返回列表</button>
+      </div>
+    </div>
+    <iframe id="frame" title="产物内容" hidden></iframe>
+  </div>
 </section>
 
 <footer class="foot">
-  <span>只读浏览 · 不渲染、不校验、不改写产物 · 仅回环监听</span>
+  <span>只读浏览 · 不渲染、不校验、不改写产物 · 仅回环监听 · 按 <kbd class="kbd">/</kbd> 搜索</span>
   <span id="generated"></span>
 </footer>
+
+<!-- 轻量全局提示：无遮罩、不抢焦点、自动消失，不是弹窗。 -->
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="/app.js"></script>
 </body>
