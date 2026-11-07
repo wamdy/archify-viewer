@@ -177,6 +177,23 @@ func settingsOption(editor *config.Editor) web.Option {
 	return web.WithSettings(editor)
 }
 
+// newNativeWindow 把上游 go-webview2 的 panic 收敛成可判定的 error。
+// 该库 CreateCoreWebView2ControllerCompleted 对 nil controller 未判空（chromium.go:190），
+// 在 WebView2 运行时异常或同一 exe 已有实例占用用户数据目录时会 panic；
+// 本工具是 windowsgui 子系统产物，没有控制台，panic 表现为「双击后窗口静默消失」，
+// 比可控地回退系统浏览器更糟。recover 后由调用方走既有浏览器回退路径。
+var nativeWindowFactory = desktop.New
+
+func newNativeWindow(title, url string, width, height int) (win *desktop.Window, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			win = nil
+			err = fmt.Errorf("原生窗口初始化失败: %v", r)
+		}
+	}()
+	return nativeWindowFactory(title, url, width, height)
+}
+
 func guiCmd(args []string) {
 	fs, lf := newFlagSet("gui")
 	_ = fs.Parse(args)
@@ -216,7 +233,7 @@ func guiCmd(args []string) {
 	if !lf.noBrowser && desktop.Available() == nil {
 		// WebView2 要求窗口在主操作系统线程上创建与运行。
 		runtime.LockOSThread()
-		win, werr := desktop.New("Archify 产物库", url, cfg.GUI.Width, cfg.GUI.Height)
+		win, werr := newNativeWindow("Archify 产物库", url, cfg.GUI.Width, cfg.GUI.Height)
 		if werr == nil {
 			// 关闭行为每次 WM_CLOSE 都重新读配置，设置页修改后无需重启。
 			// 托盘「退出」必须经 win.Close() → Dispatch(Terminate) 回到 UI 线程，不能直接 Quit。

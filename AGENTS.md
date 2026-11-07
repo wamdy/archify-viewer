@@ -151,9 +151,18 @@ JSON 无绝对路径、一处根不可读不影响其余、`Find` 的 ID/前缀/
 非法输入不写坏配置、关闭行为运行时生效、favicon 白名单、设置视图不把路径泄漏进 `/api/index`；
 `internal/desktop` 另覆盖 `ParseCloseBehavior` 三态与未知值回落。
 
+另有两类钉住真实缺陷的用例：`main_test.go` 的 `TestNewNativeWindow*`（上游 WebView2 初始化 panic
+必须收敛成 error 并回退浏览器）、`internal/config/settings_concurrency_test.go` 的并发写入 × 快照读
+压力用例（`-race` 门在本机无 gcc 时的**逻辑层替代**，明确不证明无数据竞争）。
+
+**测试隔离**：`TestLoadEmptyRootsIsNotAnError` 用 `t.Setenv("APPDATA", t.TempDir())` 隔离真实用户配置
+目录——本机 `%AppData%/archify-viewer/config.yaml` 若存在，`config.Load` 会把它当第二档配置读入，
+使「空库」断言拿到用户自己的 roots 而假红。用户配置文件属用户资产，**不删不改**，只在测试进程内隔离。
+
 **没有浏览器级 UI 自动化**——界面改动靠构建产物人工走查留证（主仓 `harness/.../06_test/`）。
-自动化部分由「DOM 桩状态探针 + 真实进程 HTTP 全链路 + PE 结构解析」承担，
-托盘图标、气泡、右键菜单、双击恢复等 Win32 交互仍属人工门，不得用 `docker compose ps healthy`
+自动化部分由「DOM 桩状态探针 + 真实进程 HTTP 全链路 + PE 结构解析 + 真机只读窗口巡检」承担。
+真机巡检按 `GetWindowThreadProcessId` 归属过滤（按标题找窗口会误命中别的实例，实测踩过）；
+托盘气泡、右键菜单点击、双击恢复等交互仍属人工门，不得用 `docker compose ps healthy`
 或 `go test` 绿来冒充已验证。
 
 ---

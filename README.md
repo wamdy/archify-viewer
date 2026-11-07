@@ -82,6 +82,12 @@ Windows 原生窗口形态下，点「×」默认只隐藏窗口，系统托盘�
 
 三个设置端点只在 `gui` / `run` 形态装配；`list` / `open` 不起服务，纯只读用法不注入写面。
 
+**原生窗口的失败兜底**：上游 `go-webview2` 在 WebView2 controller 创建失败时会对 nil 指针解引用而
+panic（`pkg/edge/chromium.go` 的 `CreateCoreWebView2ControllerCompleted`）；GUI 子系统产物没有控制台，
+panic 就表现为「双击后静默消失」。本工具把 `desktop.New` 包在 `newNativeWindow` 里，把 panic 收敛成
+可判定 error，再走既有的系统浏览器回退路径，并用单测钉住。已在运行的实例占用 WebView2 用户数据目录时
+同样按此路径处理，不会崩掉整个进程。
+
 ## 安全边界
 
 - 只监听 `127.0.0.1`（默认随机空闲端口）。`-addr` 填非回环地址**直接拒绝启动**——
