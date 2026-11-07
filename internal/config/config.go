@@ -1,10 +1,12 @@
-// Package config 负责 archify-viewer 的三档产物根发现、配置文件加载与监听地址校验。
+// Package config 负责 archify-viewer 的三档产物根发现、配置文件加载、设置持久化与监听地址校验。
 //
 // 红线（对应 design.md §五-1 / tasks.md 四-3）：
 //   - gui/run 的 HTTP 监听只允许回环地址；非回环一律返回 error，由调用方终止进程，
 //     **有意不同于** ssh-tunnel-ui 的「静默回落 127.0.0.1 + 告警」——共享监听属 P2，未实现时
 //     启动失败比降级更不可能被忽略。
 //   - 显式给出的产物根路径不存在即失败，不静默跳过。
+//   - 配置文件的写入只发生在 internal/config（Editor），internal/web 通过接口调用，
+//     包内不出现任何写文件系统调用；产物库本身仍然只读。
 package config
 
 import (
@@ -15,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,6 +27,11 @@ const ArtifactDirName = ".archify"
 
 // DefaultGUIAddr 端口 0 = 系统分配空闲端口，因此重复启动互不冲突。
 const DefaultGUIAddr = "127.0.0.1:0"
+
+// DefaultCloseAction 是关闭主窗口的默认行为：隐藏到托盘，后台继续服务。
+// 与 ssh-tunnel-ui 默认「每次询问」不同：本机查看器没有需要确认的后台连接，
+// 直接隐藏更顺；首次隐藏会弹一次托盘气泡说明如何恢复。
+const DefaultCloseAction = "tray"
 
 const (
 	defaultWidth  = 1440
@@ -36,15 +44,19 @@ type Root struct {
 	Path  string
 }
 
-// GUI 是桌面/浏览器形态的监听与窗口参数。
+// GUI 是桌面/浏览器形态的监听、窗口与关闭行为参数。
 type GUI struct {
-	Addr   string
-	Width  int
-	Height int
+	Addr        string
+	Width       int
+	Height      int
+	CloseAction string // ask | tray | quit
 }
 
 // Config 是校验后的最终配置。
+// mu 保护运行时可变的 Roots / RootSource / GUI.CloseAction：设置页可以在进程运行中改目录，
+// 而 index.Scan 与 HTTP 端点会并发读取，必须走下面的快照方法而不是裸字段。
 type Config struct {
+	mu         sync.RWMutex
 	Roots      []Root
 	GUI        GUI
 	ConfigPath string // 实际加载到的配置文件，未加载则为空
@@ -67,9 +79,10 @@ type fileRoot struct {
 }
 
 type fileGUI struct {
-	Addr   string `yaml:"addr"`
-	Width  int    `yaml:"width"`
-	Height int    `yaml:"height"`
+	Addr        string `yaml:"addr"`
+	Width       int    `yaml:"width"`
+	Height      int    `yaml:"height"`
+	CloseAction string `yaml:"close_action,omitempty"`
 }
 
 type configFile struct {
@@ -87,7 +100,12 @@ func Load(opt Options) (*Config, error) {
 		opt.Height = defaultHeight
 	}
 
-	cfg := &Config{GUI: GUI{Addr: DefaultGUIAddr, Width: opt.Width, Height: opt.Height}}
+	cfg := &Config{GUI: GUI{
+		Addr:        DefaultGUIAddr,
+		Width:       opt.Width,
+		Height:      opt.Height,
+		CloseAction: DefaultCloseAction,
+	}}
 
 	file, err := loadFile(opt.ConfigPath)
 	if err != nil {
@@ -103,6 +121,9 @@ func Load(opt Options) (*Config, error) {
 		}
 		if file.data.GUI.Height > 0 {
 			cfg.GUI.Height = file.data.GUI.Height
+		}
+		if file.data.GUI.CloseAction != "" {
+			cfg.GUI.CloseAction = NormalizeCloseAction(file.data.GUI.CloseAction)
 		}
 	}
 	if opt.Addr != "" {
@@ -252,6 +273,65 @@ func labelFor(path string) string {
 	return base
 }
 
+// NormalizeCloseAction 把配置值收敛到三个合法值，未知值回落到默认（避免笔误让程序行为失控）。
+func NormalizeCloseAction(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "ask":
+		return "ask"
+	case "tray":
+		return "tray"
+	case "quit":
+		return "quit"
+	default:
+		return DefaultCloseAction
+	}
+}
+
+/* ---------- 运行时可变配置的并发安全读写 ---------- */
+
+// RootSnapshot 返回产物根副本；index.Scan 必须用它，避免与设置页的写入竞争。
+func (c *Config) RootSnapshot() []Root {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]Root(nil), c.Roots...)
+}
+
+// SetRoots 原子替换当前会话的产物根与来源，供设置页「立即生效」使用。
+func (c *Config) SetRoots(roots []Root, source string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Roots = append([]Root(nil), roots...)
+	c.RootSource = source
+}
+
+// Source 返回当前产物根来源（flag / discover / config / none）。
+func (c *Config) Source() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.RootSource
+}
+
+// CloseActionValue 返回当前关闭行为；托盘在每次 WM_CLOSE 时读取，支持运行中改设置。
+func (c *Config) CloseActionValue() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.GUI.CloseAction
+}
+
+// SetCloseAction 原子更新关闭行为。
+func (c *Config) SetCloseAction(v string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.GUI.CloseAction = NormalizeCloseAction(v)
+}
+
+// GUIValues 返回窗口/监听参数副本。
+func (c *Config) GUIValues() GUI {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.GUI
+}
+
 type loadedFile struct {
 	path   string
 	loaded bool
@@ -298,11 +378,20 @@ func loadFile(explicit string) (*loadedFile, error) {
 	return &loadedFile{}, nil
 }
 
+// UserConfigPath 是设置页首次保存时使用的落点（与 configCandidates 第二档一致）。
+func UserConfigPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("无法定位用户配置目录: %w", err)
+	}
+	return filepath.Join(dir, "archify-viewer", "config.yaml"), nil
+}
+
 // configCandidates 与 ssh-tunnel-ui 同口径：当前目录优先，其次用户配置目录。
 func configCandidates() []string {
 	paths := []string{"config.yaml"}
-	if dir, err := os.UserConfigDir(); err == nil {
-		paths = append(paths, filepath.Join(dir, "archify-viewer", "config.yaml"))
+	if user, err := UserConfigPath(); err == nil {
+		paths = append(paths, user)
 	}
 	return paths
 }

@@ -17,3 +17,6 @@ func New(_, _ string, _, _ int) (*Window, error) { return nil, Available() }
 func (w *Window) Run() {}
 
 func (w *Window) Terminate() {}
+
+// Close 是托盘「退出」使用的语义化入口；非 Windows 无托盘，保持 no-op。
+func (w *Window) Close() {}

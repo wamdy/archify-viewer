@@ -156,6 +156,10 @@ func TestLoadRejectsMissingConfigFile(t *testing.T) {
 }
 
 func TestLoadEmptyRootsIsNotAnError(t *testing.T) {
+	// 隔离真实用户配置目录：本机 %AppData%/archify-viewer/config.yaml 若已存在，
+	// Load 会把它当第二档配置读入，使「空库」断言拿到用户自己的 roots（实测假红）。
+	// 用户配置文件属于用户资产，不删不改，只在测试进程内把 APPDATA 指到临时目录。
+	t.Setenv("APPDATA", t.TempDir())
 	base := t.TempDir()
 	orphan := filepath.Join(base, "orphan")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {

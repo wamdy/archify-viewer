@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"archify-viewer/internal/config"
+	"archify-viewer/internal/desktop"
 )
 
 // 钉住曾真实发生过的缺陷：listFlags 按值复制 launchFlags 后，-root 注册在副本之外，
@@ -82,4 +84,38 @@ func filepathBase(p string) string {
 		}
 	}
 	return p
+}
+
+// TestNewNativeWindowRecoversUpstreamPanic 钉住真机走查暴露的缺陷：
+// go-webview2 在 controller 创建失败时对 nil controller 解引用会 panic，
+// windowsgui 子系统产物无控制台，panic 等于「双击后静默消失」。
+// 必须收敛成 error，让 guiCmd 走既有的系统浏览器回退路径。
+func TestNewNativeWindowRecoversUpstreamPanic(t *testing.T) {
+	orig := nativeWindowFactory
+	defer func() { nativeWindowFactory = orig }()
+
+	nativeWindowFactory = func(string, string, int, int) (*desktop.Window, error) {
+		panic("runtime error: invalid memory address or nil pointer dereference")
+	}
+	win, err := newNativeWindow("Archify 产物库", "http://127.0.0.1:1/", 1440, 900)
+	if win != nil {
+		t.Fatal("panic 后不应返回窗口实例")
+	}
+	if err == nil || !strings.Contains(err.Error(), "原生窗口初始化失败") {
+		t.Fatalf("panic 未收敛成可判定 error: %v", err)
+	}
+}
+
+func TestNewNativeWindowPassesThroughNormalResult(t *testing.T) {
+	orig := nativeWindowFactory
+	defer func() { nativeWindowFactory = orig }()
+
+	sentinel := &desktop.Window{}
+	nativeWindowFactory = func(string, string, int, int) (*desktop.Window, error) {
+		return sentinel, nil
+	}
+	win, err := newNativeWindow("Archify 产物库", "http://127.0.0.1:1/", 1440, 900)
+	if err != nil || win != sentinel {
+		t.Fatalf("正常路径被改写: win=%v err=%v", win, err)
+	}
 }

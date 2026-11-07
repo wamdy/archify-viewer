@@ -165,12 +165,13 @@ func (a *Artifact) DirName() string { return filepath.Base(a.RelPath) }
 func Scan(cfg *config.Config) (*Index, *Store) {
 	idx := &Index{
 		GeneratedAt: nowUnix(),
-		RootSource:  cfg.RootSource,
+		RootSource:  cfg.Source(),
 		ByType:      map[string]int{},
 	}
 	store := &Store{byID: map[string]*Artifact{}}
 
-	for _, root := range cfg.Roots {
+	// 设置页可在运行中改目录：必须取锁保护的快照，否则与 cfg.SetRoots 形成数据竞争。
+	for _, root := range cfg.RootSnapshot() {
 		status := RootStatus{Label: root.Label, Path: root.Path}
 		entries, err := os.ReadDir(root.Path)
 		if err != nil {
