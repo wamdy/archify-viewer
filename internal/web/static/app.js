@@ -204,7 +204,11 @@ async function reload(rescan) {
 function match(a) {
   const tags = a.tags || [];
   if (state.uncatOnly && tags.length) return false;
-  if (state.tagSel.length && !state.tagSel.every((t) => tags.includes(t))) return false;
+  if (state.tagSel.length) {
+    // 「或」语义：命中任一选中标签即显示；选父路径时命中其整棵子树。
+    const hit = state.tagSel.some((sel) => tags.some((t) => t === sel || t.indexOf(sel + "/") === 0));
+    if (!hit) return false;
+  }
   if (state.type && a.type !== state.type) return false;
   if (state.root && a.root !== state.root) return false;
   if (!state.q) return true;
@@ -304,13 +308,13 @@ function syncFilters(idx) {
   fillSelect(el("f-root"), roots, state.root);
 }
 
-function hasFilter() { return !!(state.q || state.type || state.root); }
+function hasFilter() { return !!(state.q || state.type || state.root || state.tagSel.length || state.uncatOnly); }
 function filterSummary() {
   const parts = [];
   if (state.q) parts.push("搜索「" + state.q + "」");
   if (state.type) parts.push("类型 " + state.type);
   if (state.root) parts.push("来源 " + state.root);
-  if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" + "));
+  if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" 或 "));
   if (state.uncatOnly) parts.push("未分类");
   return parts.join(" · ") || "无条件";
 }
@@ -1021,10 +1025,13 @@ function renderTree(idx) {
       const child = node.children.get(k);
       const hasKids = child.children.size > 0;
       const open = !!state.treeExpanded[child.path];
-      let out = '<div class="tree-node" data-action="tree-toggle" data-path="' + esc(child.path) + '"' +
+      const active = state.tagSel.indexOf(child.path) >= 0;
+      let out = '<div class="tree-node' + (active ? " is-active" : "") + '" data-action="tree-filter" data-path="' + esc(child.path) + '"' +
         (hasKids ? ' aria-expanded="' + (open ? "true" : "false") + '"' : "") +
+        ' title="' + (active ? "移除该标签筛选" : "按此标签筛选右侧列表") + '"' +
         ' style="padding-left:' + (6 + depth * 12) + 'px">' +
-        '<span class="t-caret">' + (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<span class="t-caret" ' + (hasKids ? 'data-action="tree-expand" data-path="' + esc(child.path) + '"' : "") + '>' +
+        (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
         '<span class="t-name">' + esc(child.name) + "</span>" +
         '<span class="t-count">' + (counts.get(child.path) || 0) + "</span></div>";
       if (hasKids && open) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
@@ -1077,8 +1084,8 @@ function renderTagFilter(idx) {
   panel.innerHTML = paths.map((p) => {
     const on = state.tagSel.indexOf(p) >= 0;
     const n = arts.filter((a) => (a.tags || []).indexOf(p) >= 0).length;
-    return '<label><input type="checkbox" data-tag="' + esc(p) + '"' + (on ? " checked" : "") + "> <span>" +
-      esc(p) + '</span><span class="tf-count">' + n + "</span></label>";
+    return '<label title="命中任一已选标签即显示"><input type="checkbox" data-tag="' + esc(p) + '"' +
+      (on ? " checked" : "") + "> <span>" + esc(p) + '</span><span class="tf-count">' + n + "</span></label>";
   }).join("");
 }
 
@@ -1217,10 +1224,21 @@ function onTreeClick(e) {
   const t = targetFor(e, "[data-action]");
   if (!t) return;
   const act = t.dataset.action;
-  if (act === "tree-toggle") {
+  if (act === "tree-expand") {
     const p = t.dataset.path;
     state.treeExpanded[p] = !state.treeExpanded[p];
     renderTree(state.index);
+    return;
+  }
+  if (act === "tree-filter") {
+    const p = t.dataset.path;
+    const i = state.tagSel.indexOf(p);
+    if (i >= 0) state.tagSel.splice(i, 1);
+    else {
+      state.tagSel.push(p);
+      state.treeExpanded[p] = true; // 选中父路径时顺手展开，便于继续下钻
+    }
+    render();
     return;
   }
   if (act === "tree-types") {
