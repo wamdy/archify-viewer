@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // pngBytes 生成一段结构合法的 PNG 头（魔数 + IHDR + 尺寸），足够通过 isValidPNG。
@@ -226,5 +227,38 @@ func TestCaptureErrorPropagatesWithoutCache(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "e-1-1.png")); !os.IsNotExist(err) {
 		t.Error("失败不应落盘")
+	}
+}
+
+func TestMissingDeleteAndEnsure(t *testing.T) {
+	dir := t.TempDir()
+	f := &fakeCapturer{}
+	s := NewStore(dir, f, nil)
+	ctx := context.Background()
+
+	if _, err := s.GetOrCreate(ctx, "cached-1-1", "u"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Missing([]string{"cached-1-1", "new-2-2", "../bad"}); len(got) != 1 || got[0] != "new-2-2" {
+		t.Fatalf("Missing = %v", got)
+	}
+
+	queued := s.EnsureMissing(map[string]string{"cached-1-1": "u", "new-2-2": "u"})
+	if queued != 1 {
+		t.Fatalf("EnsureMissing queued = %d, want 1（已存在的必须跳过）", queued)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&f.calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&f.calls); got != 2 {
+		t.Fatalf("后台补生成未完成：calls=%d", got)
+	}
+
+	if n := s.DeleteKeys([]string{"cached-1-1", "../bad"}); n != 1 {
+		t.Fatalf("DeleteKeys = %d, want 1", n)
+	}
+	if got := s.Missing([]string{"cached-1-1"}); len(got) != 1 {
+		t.Error("删除后应重新出现在 Missing 中")
 	}
 }

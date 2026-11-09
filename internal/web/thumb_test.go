@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"archify-viewer/internal/thumbs"
 )
@@ -159,5 +161,58 @@ func TestRescanDropsStaleThumbs(t *testing.T) {
 	}
 	if files, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(files) != 1 {
 		t.Errorf("当前产物的缓存应保留，实际 %v", files)
+	}
+}
+
+func TestRebuildThumbsDeletesAndRequeues(t *testing.T) {
+	capt := &countingCapturer{}
+	srv, id, dir := newThumbServer(t, capt)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/t/"+id, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("首次生成 status = %d", rec.Code)
+	}
+
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/api/thumbs/rebuild", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("rebuild status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	var out struct {
+		Removed int `json:"removed"`
+		Queued  int `json:"queued"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Removed != 1 || out.Queued != 1 {
+		t.Fatalf("rebuild = %+v, want removed=1 queued=1", out)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if files, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(files) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("重建后缓存未恢复")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&capt.calls); got != 2 {
+		t.Errorf("重建应再采集一次，calls=%d", got)
+	}
+}
+
+func TestRebuildUnavailableWithoutStore(t *testing.T) {
+	cfg, idx, store, _ := buildFixture(t)
+	srv, err := New(cfg, idx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/thumbs/rebuild", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
 	}
 }

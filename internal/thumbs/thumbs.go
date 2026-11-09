@@ -253,3 +253,67 @@ func writeAtomic(path string, b []byte) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// Missing 返回给定键中「尚无有效缓存」的键集合（只读检查，不触发采集）。
+func (s *Store) Missing(keys []string) []string {
+	if s == nil || s.dir == "" {
+		return nil
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !safeKey(k) {
+			continue
+		}
+		if _, ok := readValid(filepath.Join(s.dir, k+".png")); !ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// EnsureMissing 在后台串行补齐缺失的缩略图（key → 采集 URL）。
+// 立即返回排队数；生成走既有的全局并发 1 与单飞，不会阻塞 /api/index。
+func (s *Store) EnsureMissing(items map[string]string) int {
+	if s == nil || s.dir == "" || len(items) == 0 {
+		return 0
+	}
+	todo := make([]string, 0, len(items))
+	for k := range items {
+		if !safeKey(k) {
+			continue
+		}
+		if _, ok := readValid(filepath.Join(s.dir, k+".png")); !ok {
+			todo = append(todo, k)
+		}
+	}
+	if len(todo) == 0 {
+		return 0
+	}
+	s.log.Printf("缩略图补生成排队 %d 件", len(todo))
+	go func() {
+		for _, k := range todo {
+			if _, err := s.GetOrCreate(context.Background(), k, items[k]); err != nil {
+				s.log.Printf("缩略图补生成失败 %s: %v", k, err)
+			}
+		}
+		s.log.Printf("缩略图补生成完成 %d 件", len(todo))
+	}()
+	return len(todo)
+}
+
+// DeleteKeys 删除给定键的缓存文件（手动重建用），返回删除数。
+func (s *Store) DeleteKeys(keys []string) int {
+	if s == nil || s.dir == "" {
+		return 0
+	}
+	n := 0
+	for _, k := range keys {
+		if !safeKey(k) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.dir, k+".png")); err == nil {
+			n++
+		}
+	}
+	return n
+}

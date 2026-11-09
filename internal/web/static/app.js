@@ -40,6 +40,7 @@ const state = {
   visible: [],       // 当前可见序列（前后翻的依据）
   treeExpanded: {},  // 树节点展开状态
   treeCollapsed: false,
+  thumbBust: 0,      // 手动重建/重扫后给缩略图 URL 加版本，绕过浏览器内存缓存
   autoCleared: [], // 索引刷新时自动失效的筛选条件，合并进同一次提示，避免被后续提示吞掉
   settings: null,
   settingsError: "",
@@ -240,7 +241,7 @@ function card(a) {
   node.innerHTML =
     '<div class="card-thumb">' +
       '<img class="card-thumb-img" loading="lazy" decoding="async" alt="" ' +
-        'src="/t/' + esc(a.id) + '" data-id="' + esc(a.id) + '">' +
+        'src="/t/' + esc(a.id) + (state.thumbBust ? "?v=" + state.thumbBust : "") + '" data-id="' + esc(a.id) + '">' +
       '<span class="card-thumb-ph" aria-hidden="true">' + esc(a.type) + "</span>" +
     "</div>" +
     '<div class="card-head">' + tagsHtml(a) + "</div>" +
@@ -1162,6 +1163,45 @@ function onGridClick(e) {
   }
 }
 
+let rebuildArmedAt = 0;
+
+// 重建缩略图：两击确认（页面内自绘，不用原生弹窗）；生成在后台串行进行。
+function onRebuildThumbs() {
+  const btn = el("btn-rebuild-thumbs");
+  const now = Date.now();
+  if (now - rebuildArmedAt > 4000) {
+    rebuildArmedAt = now;
+    if (btn) btn.textContent = "确认重建？";
+    setTimeout(() => {
+      if (Date.now() - rebuildArmedAt >= 4000 && btn) btn.textContent = "重建缩略图";
+    }, 4200);
+    return;
+  }
+  rebuildArmedAt = 0;
+  if (btn) { btn.textContent = "重建中…"; btn.disabled = true; }
+  requestJSON("/api/thumbs/rebuild", { method: "POST" })
+    .then((j) => {
+      const queued = (j && j.queued) || 0;
+      toast("已排入 " + queued + " 张缩略图（后台生成，约 2 秒/件）", "ok");
+      scheduleThumbRefresh([3000, 12000, 30000]);
+    })
+    .catch((err) => toast("重建失败：" + (err && err.message ? err.message : "网络错误"), "err"))
+    .finally(() => {
+      if (btn) { btn.textContent = "重建缩略图"; btn.disabled = false; }
+    });
+}
+
+// 后台补生成期间，隔几个时间点重绘列表让新图出现；用户不在列表页时不打扰。
+function scheduleThumbRefresh(delays) {
+  delays.forEach((ms) => {
+    setTimeout(() => {
+      if (state.view !== "list") return;
+      state.thumbBust = Date.now();
+      render();
+    }, ms);
+  });
+}
+
 function toggleTreePanel() {
   state.treeCollapsed = !state.treeCollapsed;
   const tree = el("nav-tree");
@@ -1337,7 +1377,8 @@ function bind() {
   el("f-type").addEventListener("change", (e) => { state.type = (e.target && e.target.value) || ""; render(); });
   el("f-root").addEventListener("change", (e) => { state.root = (e.target && e.target.value) || ""; render(); });
   el("f-sort").addEventListener("change", (e) => { state.sort = (e.target && e.target.value) || "mtime"; render(); });
-  el("btn-refresh").addEventListener("click", () => { reload(true); });
+  el("btn-refresh").addEventListener("click", () => { reload(true); scheduleThumbRefresh([3000, 12000, 30000]); });
+  el("btn-rebuild-thumbs").addEventListener("click", onRebuildThumbs);
   el("btn-empty-rescan").addEventListener("click", () => { reload(true); });
   el("btn-empty-settings").addEventListener("click", openSettings);
   el("grid").addEventListener("load", (e) => onThumbEvent(e, false), true);

@@ -64,6 +64,42 @@ func findArtifact(st *index.Store, id string) *index.Artifact {
 	return nil
 }
 
+// thumbItems 返回当前索引的「缓存键 → 采集 URL」映射。
+// 采集地址与真实查看同源（/a/{id}），保证产物内相对资源行为一致。
+func (s *Server) thumbItems() map[string]string {
+	s.mu.RLock()
+	base := strings.TrimRight(s.url, "/")
+	var arts []*index.Artifact
+	if s.idx != nil {
+		arts = s.idx.Artifacts
+	}
+	s.mu.RUnlock()
+	out := make(map[string]string, len(arts))
+	for _, a := range arts {
+		out[thumbKey(a)] = base + "/a/" + a.ID
+	}
+	return out
+}
+
+// handleRebuildThumbs 手动重建：先删当前索引范围的缓存，再后台排队重生成。
+func (s *Server) handleRebuildThumbs(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	st := s.thumbs
+	s.mu.RUnlock()
+	if st == nil || st.Dir() == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "thumb_unavailable"})
+		return
+	}
+	items := s.thumbItems()
+	keys := make([]string, 0, len(items))
+	for k := range items {
+		keys = append(keys, k)
+	}
+	removed := st.DeleteKeys(keys)
+	queued := st.EnsureMissing(items)
+	writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "queued": queued})
+}
+
 // ThumbsOption 注入缩略图缓存。nil 表示未装配：/t/{id} 返回 thumb_unavailable，
 // 前端保持占位（能力缺失不伪装成功）。
 func ThumbsOption(st *thumbs.Store) Option {

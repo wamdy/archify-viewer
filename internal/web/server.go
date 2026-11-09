@@ -97,6 +97,7 @@ func (s *Server) router() http.Handler {
 	mux.HandleFunc("GET /a/{id}", s.handleArtifact)
 	mux.HandleFunc("GET /t/{id}", s.handleThumb)
 	mux.HandleFunc("POST /api/tags", s.handleSetTags)
+	mux.HandleFunc("POST /api/thumbs/rebuild", s.handleRebuildThumbs)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
 	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
@@ -165,6 +166,8 @@ func (s *Server) Rescan() error {
 	// 缓存与标签清理都放在锁外：大目录扫描不该阻塞请求。
 	if st != nil {
 		st.GC(thumbsValid)
+		// 重扫后自动补齐缺失的缩略图（后台串行，不阻塞本次响应）。
+		st.EnsureMissing(s.thumbItems())
 	}
 	if tg != nil {
 		if n, err := tg.GC(tagsValid); err != nil {
