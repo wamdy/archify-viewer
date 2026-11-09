@@ -48,6 +48,8 @@ archify-viewer/
 ├── internal/index/             # ⭐ 核心：只读扫描 + 解析 + ID 白名单
 │   ├── index.go                # Scan / readArtifact / parseDirName / selectMainFile / Store.Find
 │   └── digest.go               # idFor(htmlAbs)[:12]、SHA256File（只读不变性断言用）
+├── internal/tags/              # ⭐ 手工多级标签（键 = type/slug，跨交付稳定）
+│   └── tags.go                 # Store：YAML 原子写 + 路径校验 + 孤儿 GC
 ├── internal/thumbs/            # ⭐ 缩略图派生缓存（全仓第二个写面，只写缓存目录）
 │   ├── thumbs.go               # Store：命中读盘 / 同 key 单飞 / 全局并发 1 / 原子落盘 / GC
 │   └── browser.go              # BrowserCapturer：系统 Chrome/Edge 无头截图（不自写 WebView2 COM）
@@ -67,8 +69,8 @@ archify-viewer/
 
 分层约束：`internal/index` 不 import `net/http`；`internal/web` 与 `internal/index` 里不得出现任何写
 文件系统调用（`os.WriteFile`/`Remove`/`Rename`/`MkdirAll`）。配置写入只允许在
-`internal/config.Editor`；缩略图缓存写入只允许在 `internal/thumbs`（`web` 通过 `thumbs.Store`
-调用，自身仍不写盘）：`web` 只依赖 `SettingsStore` 接口，产物目录与用户配置文件严格隔离。
+`internal/config.Editor`；缩略图缓存写入只允许在 `internal/thumbs`；标签写入只允许在
+`internal/tags`（`web` 通过 `thumbs.Store` / `tags.Store` 调用，自身仍不写盘）：`web` 只依赖 `SettingsStore` 接口，产物目录与用户配置文件严格隔离。
 运行期可变的 `Roots` / `RootSource` / `GUI.CloseAction` 由 `config.Config` 的 `RWMutex` 保护，
 `index.Scan` 必须走 `RootSnapshot()` / `Source()`，不得裸读字段（设置页与扫描会并发）。
 
@@ -110,6 +112,9 @@ archify-viewer/
   随 `Rescan` 清理陈旧项。写盘只发生在 `internal/thumbs`（`internal/web` 自身仍无写调用）。
   采集用系统 Chrome/Edge **无头进程** + 一次性 profile（不自写 WebView2 COM）；
   无浏览器 ⇒ 404 `thumb_unavailable`，前端保持类型占位，不伪装成功。
+- **手工标签**：键 `type/slug`（跨交付稳定，重新交付自动继承）；存 `%AppData%/archify-viewer/tags.yaml`，
+  原子写 + 0600；`POST /api/tags` 幂等整体替换，`/api/index` 每件附 `tags`；`Rescan` 时清理孤儿键。
+  路径式层级（`a/b/c`，最多 4 层）；过滤在搜索栏（多选取交集），树是分组导航。
 - 超时：`ReadHeaderTimeout=5s`、`WriteTimeout=60s`、`IdleTimeout=30s`。
 - **设置写面**：`GET /api/settings`、`POST /api/settings/roots`、`POST /api/settings/close-action`
   只在 `gui` / `run` 装配，未装配返回 503（能力缺失不伪装成功）。请求体限 1 MiB；

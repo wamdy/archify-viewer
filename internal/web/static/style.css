@@ -623,6 +623,87 @@ body {
 .spacer { flex: 1 1 auto; min-width: 0; }
 .tray-hint { color: var(--text-dim); }
 
+/* ---------- 导航树 / 标签筛选 / 卡片标签 ---------- */
+
+/* 列表视图改为「树 + 列表」两栏：树固定，只有右栏滚动。 */
+#view-list { display: flex; overflow: hidden; }
+.list-shell { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; }
+.list-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; }
+
+.nav-tree {
+  width: 230px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 10px 8px 18px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+.nav-tree.collapsed { width: 40px; padding: 10px 6px; }
+.nav-tree.collapsed .tree-body,
+.nav-tree.collapsed .tree-head > span { display: none; }
+.tree-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px 8px;
+  font-size: 11px; letter-spacing: .1em; color: var(--text-faint);
+}
+.tree-body { font-size: 12px; }
+.tree-node {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 6px; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer;
+}
+.tree-node:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.tree-node.is-active { color: var(--accent); background: var(--accent-soft); }
+.tree-node .t-caret { width: 12px; flex-shrink: 0; text-align: center; color: var(--text-faint); }
+.tree-node .t-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-node .t-count { font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tree-children { margin-left: 12px; padding-left: 4px; border-left: 1px dashed var(--border); }
+.tree-empty { padding: 6px 8px; font-size: 11px; color: var(--text-faint); }
+
+.tag-filter { position: relative; }
+.tag-filter-panel {
+  position: absolute; z-index: 8; top: calc(100% + 6px); left: 0;
+  min-width: 220px; max-height: 320px; overflow-y: auto;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.tag-filter-panel label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 6px;
+  font-size: 12px; color: var(--text-dim); cursor: pointer;
+}
+.tag-filter-panel label:hover { background: var(--surface-2); color: var(--text); }
+.tag-filter-panel .tf-count { margin-left: auto; font-size: 10.5px; color: var(--text-faint); }
+.tag-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag-chip {
+  font-size: 10.5px; padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text-dim);
+  cursor: pointer;
+}
+.tag-chip:hover { border-color: var(--accent); color: var(--accent); }
+.tag-chip.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.card-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.card-tag-edit {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 8px; border-top: 1px dashed var(--border);
+}
+.card-tag-edit input { width: 100%; }
+.tag-edit-list { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag-edit-hint { font-size: 10.5px; color: var(--text-faint); }
+
+.viewer-nav { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.viewer-pos {
+  min-width: 56px; text-align: center;
+  font-size: 11px; color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 780px) {
   .grid, .settings-grid { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }

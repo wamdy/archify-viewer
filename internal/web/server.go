@@ -23,6 +23,7 @@ import (
 
 	"archify-viewer/internal/config"
 	"archify-viewer/internal/index"
+	"archify-viewer/internal/tags"
 	"archify-viewer/internal/thumbs"
 )
 
@@ -53,6 +54,9 @@ type Server struct {
 
 	// thumbs 是缩略图派生缓存；nil 表示未装配（/t/{id} 返回 thumb_unavailable）。
 	thumbs *thumbs.Store
+
+	// tags 是手工标签存储；nil 表示未装配（/api/tags 返回 503，索引不带 tags）。
+	tags *tags.Store
 
 	srv *http.Server
 	ln  net.Listener
@@ -92,6 +96,7 @@ func (s *Server) router() http.Handler {
 	mux.HandleFunc("GET /api/index", s.handleIndex)
 	mux.HandleFunc("GET /a/{id}", s.handleArtifact)
 	mux.HandleFunc("GET /t/{id}", s.handleThumb)
+	mux.HandleFunc("POST /api/tags", s.handleSetTags)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
 	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
@@ -137,9 +142,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	writeJSON(w, http.StatusOK, s.idx)
+	// indexView 自带快照锁；这里不能再持锁（RWMutex 递归读锁在有写者等待时会死锁）。
+	writeJSON(w, http.StatusOK, s.indexView())
 }
 
 // Rescan 重新扫描产物根并替换索引快照（仍然只读）。
@@ -147,17 +151,27 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // 但它不改任何产物文件、也不引入写面，红线 1 不受影响。
 func (s *Server) Rescan() error {
 	idx, store := index.Scan(s.cfg)
-	valid := make(map[string]struct{}, len(idx.Artifacts))
+	thumbsValid := make(map[string]struct{}, len(idx.Artifacts))
+	tagsValid := make(map[string]struct{}, len(idx.Artifacts))
 	for _, a := range idx.Artifacts {
-		valid[thumbKey(a)] = struct{}{}
+		thumbsValid[thumbKey(a)] = struct{}{}
+		tagsValid[tags.Key(a.Type, a.Slug)] = struct{}{}
 	}
 	s.mu.Lock()
 	s.idx, s.store = idx, store
 	st := s.thumbs
+	tg := s.tags
 	s.mu.Unlock()
-	// 缓存清理放在锁外：大目录扫描不该阻塞请求。
+	// 缓存与标签清理都放在锁外：大目录扫描不该阻塞请求。
 	if st != nil {
-		st.GC(valid)
+		st.GC(thumbsValid)
+	}
+	if tg != nil {
+		if n, err := tg.GC(tagsValid); err != nil {
+			log.Printf("标签孤儿清理失败: %v", err)
+		} else if n > 0 {
+			log.Printf("标签孤儿已清理 %d 条", n)
+		}
 	}
 	return nil
 }

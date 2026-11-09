@@ -29,6 +29,7 @@ import (
 	"archify-viewer/internal/config"
 	"archify-viewer/internal/desktop"
 	"archify-viewer/internal/index"
+	"archify-viewer/internal/tags"
 	"archify-viewer/internal/thumbs"
 	"archify-viewer/internal/web"
 )
@@ -178,6 +179,22 @@ func settingsOption(editor *config.Editor) web.Option {
 	return web.WithSettings(editor)
 }
 
+// tagsOption 装配手工标签存储（%AppData%/archify-viewer/tags.yaml）。
+// 读取失败或定位不到用户目录时降级为 nil：/api/tags 返回 503，索引不带 tags。
+func tagsOption() web.Option {
+	p, err := config.UserConfigPath()
+	if err != nil {
+		log.Printf("标签存储不可用（定位用户配置目录失败）: %v", err)
+		return nil
+	}
+	st, err := tags.NewStore(filepath.Join(filepath.Dir(p), "tags.yaml"))
+	if err != nil {
+		log.Printf("标签存储不可用（%v），本次会话不启用标签", err)
+		return nil
+	}
+	return web.TagsOption(st)
+}
+
 // thumbsOption 装配缩略图派生缓存（%AppData%/archify-viewer/thumbs）。
 // 取不到用户配置目录时返回 nil：/t/{id} 回 404 thumb_unavailable，前端保持占位，
 // 不伪装成功（能力缺失按既有口径降级）。
@@ -216,7 +233,7 @@ func guiCmd(args []string) {
 	logIndex(idx)
 
 	editor := newSettingsEditor(cfg, lf.configPath)
-	srv, err := web.New(cfg, idx, store, settingsOption(editor), thumbsOption())
+	srv, err := web.New(cfg, idx, store, settingsOption(editor), thumbsOption(), tagsOption())
 	if err != nil {
 		reportFatal(err)
 	}
@@ -290,7 +307,7 @@ func runCmd(args []string) {
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
 
-	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)), thumbsOption())
+	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)), thumbsOption(), tagsOption())
 	if err != nil {
 		reportFatal(err)
 	}

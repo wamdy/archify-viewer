@@ -60,6 +60,16 @@
 
 <!-- 列表视图 -->
 <div id="view-list">
+  <!-- 导航树：分组语义（产物可在多个标签下出现），过滤交给搜索栏。 -->
+  <div class="list-shell">
+    <aside id="nav-tree" class="nav-tree" aria-label="分类导航">
+      <div class="tree-head">
+        <span>分类</span>
+        <button id="btn-tree-toggle" class="btn btn-sm btn-quiet" title="收起分类" aria-label="收起分类">‹</button>
+      </div>
+      <div id="tree-body" class="tree-body"></div>
+    </aside>
+    <div class="list-main">
   <section class="controls">
     <input id="q" type="search" placeholder="搜索标题 / slug / 目录名…" autocomplete="off" aria-label="搜索产物">
     <select id="f-type" data-head="全部类型" aria-label="按类型筛选"><option value="">全部类型</option></select>
@@ -69,6 +79,11 @@
       <option value="title">标题 A→Z</option>
       <option value="size">体积大→小</option>
     </select>
+    <div class="tag-filter">
+      <button id="btn-tag-filter" class="btn" aria-expanded="false" title="按标签筛选（与其它条件取交集）">标签</button>
+      <div id="tag-filter-panel" class="tag-filter-panel" hidden aria-label="标签筛选"></div>
+    </div>
+    <div id="tag-chips" class="tag-chips"></div>
     <button id="btn-clear" class="btn btn-quiet" hidden>清除筛选</button>
     <span id="stats" class="stats" role="status" aria-live="polite"></span>
   </section>
@@ -102,6 +117,8 @@ archify-view gui  --root D:/design/.archify --root C:/Users/wamdy/项目/appollo
     <p>条件收得太紧时，可以一键清空后重新筛选。</p>
     <p><button id="btn-clear-2" class="btn">清除筛选条件</button></p>
   </section>
+    </div>
+  </div>
 </div>
 
 <!-- 查看视图：同一文档内切换，不是弹窗、不是模态层、不新开窗口。
@@ -113,6 +130,11 @@ archify-view gui  --root D:/design/.archify --root C:/Users/wamdy/项目/appollo
       <div id="viewer-tags" class="card-head"></div>
       <h2 id="viewer-name">正在读取索引…</h2>
       <p id="viewer-path" class="card-path"></p>
+    </div>
+    <div class="viewer-nav" aria-label="相邻产物">
+      <button id="btn-prev" class="btn btn-sm" title="上一张（← / j）" aria-label="上一张" disabled>‹</button>
+      <span id="viewer-pos" class="viewer-pos">— / —</span>
+      <button id="btn-next" class="btn btn-sm" title="下一张（→ / k）" aria-label="下一张" disabled>›</button>
     </div>
     <div class="viewer-actions">
       <button class="btn" data-action="copy" id="btn-copy-link" disabled>复制深链</button>

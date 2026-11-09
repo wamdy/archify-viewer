@@ -35,6 +35,11 @@ const state = {
   frameTimer: null,
   listScroll: 0,
   returnFocusId: "",
+  tagSel: [],        // 搜索栏的标签过滤（多条取交集）
+  uncatOnly: false,  // 树里的「未分类」节点
+  visible: [],       // 当前可见序列（前后翻的依据）
+  treeExpanded: {},  // 树节点展开状态
+  treeCollapsed: false,
   autoCleared: [], // 索引刷新时自动失效的筛选条件，合并进同一次提示，避免被后续提示吞掉
   settings: null,
   settingsError: "",
@@ -196,6 +201,9 @@ async function reload(rescan) {
 /* ---------- 列表：匹配、排序、卡片 ---------- */
 
 function match(a) {
+  const tags = a.tags || [];
+  if (state.uncatOnly && tags.length) return false;
+  if (state.tagSel.length && !state.tagSel.every((t) => tags.includes(t))) return false;
   if (state.type && a.type !== state.type) return false;
   if (state.root && a.root !== state.root) return false;
   if (!state.q) return true;
@@ -243,10 +251,17 @@ function card(a) {
     '<p class="card-meta">' + esc(when(a.mtime)) + " · " + bytes(a.size) +
       (warnings.length ? ' · <span class="warn">解析提示 ' + warnings.length + "</span>" : "") +
     "</p>" +
+    tagChipsHtml(a) +
+    '<div class="card-tag-edit" hidden>' +
+      '<div class="tag-edit-list"></div>' +
+      '<input class="tag-input" placeholder="输入标签，如 架构/平台，回车添加" autocomplete="off" aria-label="添加标签">' +
+      '<p class="tag-edit-hint">回车添加，点标签上的 × 删除；标签只存本机，不改产物。</p>' +
+    "</div>" +
     '<div class="card-actions">' +
       '<button class="btn btn-primary" data-action="open" data-id="' + esc(a.id) + '" title="在当前页面查看，不打开新窗口">查看</button>' +
       '<button class="btn" data-action="copy" data-copy="' + esc(deepLink) + '">复制深链</button>' +
       '<button class="btn" data-action="copy" data-copy="' + esc(a.id) + '">复制 ID</button>' +
+      '<button class="btn" data-action="tag-edit" data-id="' + esc(a.id) + '" title="给这张图打标签">标签</button>' +
     "</div>";
   return node;
 }
@@ -294,11 +309,14 @@ function filterSummary() {
   if (state.q) parts.push("搜索「" + state.q + "」");
   if (state.type) parts.push("类型 " + state.type);
   if (state.root) parts.push("来源 " + state.root);
+  if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" + "));
+  if (state.uncatOnly) parts.push("未分类");
   return parts.join(" · ") || "无条件";
 }
 
 function clearFilters() {
   state.q = ""; state.type = ""; state.root = "";
+  state.tagSel = []; state.uncatOnly = false;
   el("q").value = "";
   el("f-type").value = "";
   el("f-root").value = "";
@@ -321,6 +339,8 @@ function applyTheme(pref) {
     document.documentElement.setAttribute("data-theme", resolveTheme(valid));
   }
   try { localStorage.setItem(THEME_KEY, valid); } catch (_) { /* 隐私模式忽略 */ }
+  const f = el("frame");
+  if (f && !f.hidden) dressFrame(f);
   renderThemeButtons();
 }
 
@@ -568,6 +588,10 @@ function render() {
   syncFilters(idx);
   const arts = idx.artifacts || [];
   const visible = sorted(arts.filter(match));
+  state.visible = visible;
+  renderTree(idx);
+  renderTagFilter(idx);
+  renderTagChips();
   const grid = el("grid");
   grid.innerHTML = "";
   const frag = document.createDocumentFragment();
@@ -691,6 +715,7 @@ async function loadViewer(art) {
   state.frameReady = false;
   const frame = el("frame");
   frame.onload = () => {
+    dressFrame(frame);
     if (state.view === "viewer" && state.activeId === art.id) showViewerLoaded();
   };
   frame.src = url;
@@ -729,6 +754,7 @@ function showViewer(id) {
   renderViewerMeta();
   ensureViewerLoaded();
   resetScroll("view-viewer");
+  updateViewerNav();
   if (changed && el("btn-back").focus) el("btn-back").focus();
 }
 
@@ -866,6 +892,256 @@ async function doCopy(text, btn) {
   }
 }
 
+
+/* ---------- 标签、导航树与前后翻 ---------- */
+
+function artById(id) {
+  const arts = (state.index && state.index.artifacts) || [];
+  for (const a of arts) if (a.id === id) return a;
+  return null;
+}
+
+function tagChipsHtml(a) {
+  const tags = a.tags || [];
+  if (!tags.length) return "";
+  return '<div class="card-tags">' + tags.map((t) =>
+    '<button class="tag-chip" data-action="tag-filter" data-tag="' + esc(t) + '" title="按此标签筛选">' + esc(t) + "</button>"
+  ).join("") + "</div>";
+}
+
+function toggleTag(t) {
+  if (!t) return;
+  const i = state.tagSel.indexOf(t);
+  if (i >= 0) state.tagSel.splice(i, 1);
+  else state.tagSel.push(t);
+  render();
+}
+
+function openTagEditor(id, btn) {
+  const a = artById(id);
+  const cardNode = btn && btn.closest ? btn.closest(".card") : null;
+  if (!a || !cardNode) return;
+  const box = cardNode.querySelector(".card-tag-edit");
+  if (!box) return;
+  box.hidden = !box.hidden;
+  if (!box.hidden) {
+    renderTagDraft(cardNode, a);
+    const input = box.querySelector(".tag-input");
+    if (input && input.focus) input.focus();
+  }
+}
+
+function renderTagDraft(cardNode, a) {
+  const box = cardNode.querySelector(".card-tag-edit");
+  if (!box) return;
+  const list = box.querySelector(".tag-edit-list");
+  if (!list) return;
+  const tags = a.tags || [];
+  list.innerHTML = tags.length
+    ? tags.map((t) => '<button class="tag-chip is-on" data-action="tag-del" data-id="' + esc(a.id) + '" data-tag="' + esc(t) + '" title="删除该标签">' + esc(t) + " ×</button>").join("")
+    : '<span class="tag-edit-hint">还没有标签。</span>';
+}
+
+async function saveTags(a, next) {
+  try {
+    const j = await requestJSON("/api/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: a.type, slug: a.slug, tags: next }),
+    });
+    a.tags = (j && j.tags) || [];
+    syncAfterTags(a);
+    toast("标签已保存", "ok");
+  } catch (err) {
+    toast("标签保存失败：" + (err && err.message ? err.message : "网络错误"), "err");
+  }
+}
+
+// 保存后只刷新树/筛选与这张卡的标签，保持编辑器打开，避免整页重建打断输入。
+function syncAfterTags(a) {
+  renderTree(state.index);
+  renderTagFilter(state.index);
+  renderTagChips();
+  const btn = document.querySelector('.card [data-action="tag-edit"][data-id="' + a.id + '"]');
+  const cardNode = btn && btn.closest ? btn.closest(".card") : null;
+  if (!cardNode) return;
+  const html = tagChipsHtml(a);
+  const row = cardNode.querySelector(".card-tags");
+  if (row) {
+    if (html) row.outerHTML = html;
+    else row.remove();
+  } else if (html) {
+    const head = cardNode.querySelector(".card-head");
+    if (head) head.insertAdjacentHTML("afterend", html);
+  }
+  renderTagDraft(cardNode, a);
+}
+
+function renderTree(idx) {
+  const body = el("tree-body");
+  if (!body) return;
+  const arts = (idx && idx.artifacts) || [];
+  if (!arts.length) {
+    body.innerHTML = '<p class="tree-empty">暂无产物</p>';
+    return;
+  }
+  const counts = new Map();
+  const types = new Map();
+  let uncat = 0;
+  arts.forEach((a) => {
+    types.set(a.type, (types.get(a.type) || 0) + 1);
+    const ts = a.tags || [];
+    if (!ts.length) uncat++;
+    ts.forEach((t) => {
+      const segs = t.split("/");
+      for (let i = 1; i <= segs.length; i++) {
+        const p = segs.slice(0, i).join("/");
+        counts.set(p, (counts.get(p) || 0) + 1); // 每个前缀都计入 = 子树计数
+      }
+    });
+  });
+
+  const root = { children: new Map() };
+  counts.forEach((_, path) => {
+    const segs = path.split("/");
+    let node = root;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      if (!node.children.has(seg)) {
+        node.children.set(seg, { name: seg, path: segs.slice(0, i + 1).join("/"), children: new Map() });
+      }
+      node = node.children.get(seg);
+    }
+  });
+
+  const renderNodes = (node, depth) => {
+    const keys = [...node.children.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
+    return keys.map((k) => {
+      const child = node.children.get(k);
+      const hasKids = child.children.size > 0;
+      const open = !!state.treeExpanded[child.path];
+      let out = '<div class="tree-node" data-action="tree-toggle" data-path="' + esc(child.path) + '"' +
+        (hasKids ? ' aria-expanded="' + (open ? "true" : "false") + '"' : "") +
+        ' style="padding-left:' + (6 + depth * 12) + 'px">' +
+        '<span class="t-caret">' + (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<span class="t-name">' + esc(child.name) + "</span>" +
+        '<span class="t-count">' + (counts.get(child.path) || 0) + "</span></div>";
+      if (hasKids && open) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
+      return out;
+    }).join("");
+  };
+
+  const sys = [];
+  sys.push('<div class="tree-node' + (!state.type && !state.uncatOnly && !state.tagSel.length ? " is-active" : "") +
+    '" data-action="tree-all" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">全部产物</span>' +
+    '<span class="t-count">' + arts.length + "</span></div>");
+  sys.push('<div class="tree-node' + (state.uncatOnly ? " is-active" : "") +
+    '" data-action="tree-uncat" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">未分类</span>' +
+    '<span class="t-count">' + uncat + "</span></div>");
+
+  const typeKeys = [...types.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
+  const typesOpen = !!state.treeExpanded["__types__"];
+  sys.push('<div class="tree-node" data-action="tree-types" style="padding-left:6px"><span class="t-caret">' +
+    (typesOpen ? "▾" : "▸") + '</span><span class="t-name">按类型</span><span class="t-count">' + typeKeys.length + "</span></div>");
+  if (typesOpen) {
+    sys.push('<div class="tree-children">' + typeKeys.map((t) =>
+      '<div class="tree-node' + (state.type === t ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
+      '<span class="t-caret"></span><span class="t-name">' + esc(t) + '</span><span class="t-count">' + types.get(t) + "</span></div>"
+    ).join("") + "</div>");
+  }
+
+  const tagBlock = counts.size
+    ? '<div class="tree-head" style="padding-top:12px"><span>标签</span></div>' + renderNodes(root, 0)
+    : '<p class="tree-empty">还没有标签。在卡片上点「标签」添加。</p>';
+  body.innerHTML = sys.join("") + tagBlock;
+}
+
+function allTagPaths(idx) {
+  const set = new Set();
+  ((idx && idx.artifacts) || []).forEach((a) => (a.tags || []).forEach((t) => set.add(t)));
+  return [...set].sort((x, y) => x.localeCompare(y, "zh-CN"));
+}
+
+function renderTagFilter(idx) {
+  const panel = el("tag-filter-panel");
+  if (!panel) return;
+  const paths = allTagPaths(idx);
+  const btn = el("btn-tag-filter");
+  if (btn) btn.textContent = state.tagSel.length ? "标签 (" + state.tagSel.length + ")" : "标签";
+  if (!paths.length) {
+    panel.innerHTML = '<p class="tag-edit-hint">还没有标签。在产物卡片上点「标签」添加。</p>';
+    return;
+  }
+  const arts = (idx && idx.artifacts) || [];
+  panel.innerHTML = paths.map((p) => {
+    const on = state.tagSel.indexOf(p) >= 0;
+    const n = arts.filter((a) => (a.tags || []).indexOf(p) >= 0).length;
+    return '<label><input type="checkbox" data-tag="' + esc(p) + '"' + (on ? " checked" : "") + "> <span>" +
+      esc(p) + '</span><span class="tf-count">' + n + "</span></label>";
+  }).join("");
+}
+
+function renderTagChips() {
+  const box = el("tag-chips");
+  if (!box) return;
+  box.innerHTML = state.tagSel.map((t) =>
+    '<button class="tag-chip is-on" data-action="tag-filter" data-tag="' + esc(t) + '" title="移除该标签筛选">' + esc(t) + " ×</button>"
+  ).join("");
+}
+
+function viewerNeighbors() {
+  const list = state.visible || [];
+  let i = -1;
+  for (let k = 0; k < list.length; k++) if (list[k].id === state.activeId) { i = k; break; }
+  return { list, i };
+}
+
+function updateViewerNav() {
+  const pair = viewerNeighbors();
+  const pos = el("viewer-pos");
+  if (pos) pos.textContent = pair.i >= 0 ? (pair.i + 1) + " / " + pair.list.length : "— / —";
+  const prev = el("btn-prev");
+  const next = el("btn-next");
+  if (prev) prev.disabled = !(pair.i > 0);
+  if (next) next.disabled = !(pair.i >= 0 && pair.i < pair.list.length - 1);
+}
+
+function gotoNeighbor(delta) {
+  const pair = viewerNeighbors();
+  if (pair.i < 0) return;
+  const j = pair.i + delta;
+  if (j < 0 || j >= pair.list.length) return;
+  openViewer(pair.list[j].id);
+}
+
+// 同源注入：隐藏产物自带工具栏（主题/风格/全屏/导出），把主题同步给 iframe，
+// 并在 window 捕获阶段吞掉 T 快捷键——产物运行时把全局 keydown 绑在 document 上，
+// window 捕获先于 document 捕获，因此这里能可靠拦住。
+function dressFrame(frame) {
+  if (!frame) return;
+  let doc;
+  try { doc = frame.contentDocument; } catch (_) { return; }
+  if (!doc || !doc.documentElement) return;
+  try {
+    let style = doc.getElementById("viewer-chrome-override");
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "viewer-chrome-override";
+      style.textContent = ".toolbar{display:none!important}";
+      (doc.head || doc.documentElement).appendChild(style);
+    }
+    doc.documentElement.setAttribute("data-theme", resolveTheme(state.theme));
+    if (!doc.__viewerKeyGuard) {
+      doc.__viewerKeyGuard = true;
+      const guard = (e) => {
+        if (e.key === "t" || e.key === "T") { e.stopPropagation(); e.preventDefault(); }
+      };
+      if (frame.contentWindow) frame.contentWindow.addEventListener("keydown", guard, true);
+      else doc.addEventListener("keydown", guard, true);
+    }
+  } catch (_) { /* 跨源或卸载中：保持产物原样 */ }
+}
+
 /* ---------- 事件绑定 ---------- */
 
 function targetFor(e, selector) {
@@ -878,6 +1154,96 @@ function onGridClick(e) {
   if (!t) return;
   if (t.dataset.action === "open") openViewer(t.dataset.id);
   else if (t.dataset.action === "copy") doCopy(t.dataset.copy, t);
+  else if (t.dataset.action === "tag-filter") toggleTag(t.dataset.tag);
+  else if (t.dataset.action === "tag-edit") openTagEditor(t.dataset.id, t);
+  else if (t.dataset.action === "tag-del") {
+    const a = artById(t.dataset.id);
+    if (a) saveTags(a, (a.tags || []).filter((x) => x !== t.dataset.tag));
+  }
+}
+
+function toggleTreePanel() {
+  state.treeCollapsed = !state.treeCollapsed;
+  const tree = el("nav-tree");
+  if (tree) tree.classList.toggle("collapsed", state.treeCollapsed);
+  const btn = el("btn-tree-toggle");
+  if (btn) {
+    btn.textContent = state.treeCollapsed ? "›" : "‹";
+    btn.title = state.treeCollapsed ? "展开分类" : "收起分类";
+  }
+}
+
+function onTreeClick(e) {
+  const t = targetFor(e, "[data-action]");
+  if (!t) return;
+  const act = t.dataset.action;
+  if (act === "tree-toggle") {
+    const p = t.dataset.path;
+    state.treeExpanded[p] = !state.treeExpanded[p];
+    renderTree(state.index);
+    return;
+  }
+  if (act === "tree-types") {
+    state.treeExpanded["__types__"] = !state.treeExpanded["__types__"];
+    renderTree(state.index);
+    return;
+  }
+  if (act === "tree-type") {
+    state.type = state.type === t.dataset.type ? "" : t.dataset.type;
+    render();
+    return;
+  }
+  if (act === "tree-uncat") {
+    state.uncatOnly = !state.uncatOnly;
+    if (state.uncatOnly) state.tagSel = [];
+    render();
+    return;
+  }
+  if (act === "tree-all") {
+    clearFilters();
+  }
+}
+
+function toggleTagPanel(e) {
+  if (e && e.stopPropagation) e.stopPropagation();
+  const panel = el("tag-filter-panel");
+  const btn = el("btn-tag-filter");
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  if (btn) btn.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+}
+
+function closeTagPanel(e) {
+  const panel = el("tag-filter-panel");
+  if (!panel || panel.hidden) return;
+  const t = e && e.target;
+  if (t && t.closest && t.closest(".tag-filter")) return;
+  panel.hidden = true;
+  const btn = el("btn-tag-filter");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function onTagPanelChange(e) {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.tag) toggleTag(t.dataset.tag);
+}
+
+// 卡片上的标签输入：回车即保存；编辑区随卡片展开，不用弹窗。
+function onGridKeyDown(e) {
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains("tag-input")) return;
+  if (e.key !== "Enter") return;
+  if (e.preventDefault) e.preventDefault();
+  const value = String(t.value || "").trim();
+  if (!value) return;
+  const cardNode = t.closest ? t.closest(".card") : null;
+  const btn = cardNode ? cardNode.querySelector('[data-action="tag-edit"]') : null;
+  const a = btn ? artById(btn.dataset.id) : null;
+  if (!a) return;
+  const next = (a.tags || []).slice();
+  if (next.indexOf(value) < 0) next.push(value);
+  t.value = "";
+  saveTags(a, next);
 }
 
 // 缩略图用捕获阶段委托：load/error 不冒泡，但会经过祖先节点。
@@ -940,6 +1306,18 @@ function onKeyDown(e) {
     }
     return;
   }
+  if (state.view === "viewer" && !editing) {
+    if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") {
+      if (e.preventDefault) e.preventDefault();
+      gotoNeighbor(-1);
+      return;
+    }
+    if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") {
+      if (e.preventDefault) e.preventDefault();
+      gotoNeighbor(1);
+      return;
+    }
+  }
   // 只在非输入上下文抢焦点，避免打断输入。
   if (e.key === "," && !editing && !e.ctrlKey && !e.metaKey && !e.altKey && state.view !== "settings") {
     if (e.preventDefault) e.preventDefault();
@@ -977,6 +1355,15 @@ function bind() {
     if (e.key === "Enter") { if (e.preventDefault) e.preventDefault(); addRoot(); }
   });
   el("grid").addEventListener("click", onGridClick);
+  el("grid").addEventListener("keydown", onGridKeyDown);
+  el("tree-body").addEventListener("click", onTreeClick);
+  el("btn-tree-toggle").addEventListener("click", toggleTreePanel);
+  el("btn-tag-filter").addEventListener("click", toggleTagPanel);
+  el("tag-filter-panel").addEventListener("change", onTagPanelChange);
+  el("tag-filter-panel").addEventListener("click", (e) => { if (e.stopPropagation) e.stopPropagation(); });
+  el("btn-prev").addEventListener("click", () => gotoNeighbor(-1));
+  el("btn-next").addEventListener("click", () => gotoNeighbor(1));
+  document.addEventListener("click", closeTagPanel);
   el("view-viewer").addEventListener("click", onViewerClick);
   el("view-settings").addEventListener("click", onSettingsClick);
   document.addEventListener("keydown", onKeyDown);
