@@ -8,8 +8,8 @@ if (-not (Test-Path "build")) { New-Item -ItemType Directory -Path "build" | Out
 Write-Host "==> windows/amd64"
 $env:CGO_ENABLED = "0"
 $env:GOFLAGS = "-mod=mod"
-go build -trimpath -ldflags "-s -w -H windowsgui" -o "build/archify-view-windows-amd64.exe" .
+go build -trimpath -ldflags "-s -w -H windowsgui" -o "build/archify-viewer-windows-amd64.exe" .
 if ($LASTEXITCODE -ne 0) { throw "go build 失败：$LASTEXITCODE" }
 
-Write-Host "==> done: build/archify-view-windows-amd64.exe"
-& ".\build\archify-view-windows-amd64.exe" version
+Write-Host "==> done: build/archify-viewer-windows-amd64.exe"
+& ".\build\archify-viewer-windows-amd64.exe" version

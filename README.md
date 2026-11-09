@@ -20,7 +20,7 @@ archify 每次交付把产物写到**当时工作目录**下的 `.archify/<type>
 预编译产物在 Releases；从源码：
 
 ```powershell
-powershell -File scripts/build.ps1     # → build\archify-view-windows-amd64.exe
+powershell -File scripts/build.ps1     # → build\archify-viewer-windows-amd64.exe
 ```
 
 Windows 产物用 `-H windowsgui` 链接成 GUI 子系统：**双击启动不弹终端黑窗**，命令行调用时
@@ -31,11 +31,11 @@ Windows 产物用 `-H windowsgui` 链接成 GUI 子系统：**双击启动不弹
 ## 四种用法
 
 ```bat
-archify-view                                :: 双击即此：原生窗口（不可用时开浏览器）
-archify-view list                           :: 终端清单，不开窗口不起服务
-archify-view list --json --type erd --limit 10
-archify-view open 3f2a1c9b0d4e              :: 按 ID 交给系统默认浏览器（file:// 直开）
-archify-view run  --root D:/design/.archify  :: 只要服务，打印 URL，Ctrl-C 退出
+archify-viewer                                :: 双击即此：原生窗口（不可用时开浏览器）
+archify-viewer list                           :: 终端清单，不开窗口不起服务
+archify-viewer list --json --type erd --limit 10
+archify-viewer open 3f2a1c9b0d4e              :: 按 ID 交给系统默认浏览器（file:// 直开）
+archify-viewer run  --root D:/design/.archify  :: 只要服务，打印 URL，Ctrl-C 退出
 ```
 
 产物根按三档优先级发现，命中即停：

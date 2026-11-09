@@ -1,4 +1,4 @@
-// Command archify-view 是 archify 产物库的单机查看器（appollo 主仓票 #1087，P1）。
+// Command archify-viewer 是 archify 产物库的单机查看器（appollo 主仓票 #1087，P1）。
 //
 // 一个入口四种形态：
 //
@@ -57,7 +57,7 @@ func main() {
 	case "open":
 		openCmd(args[1:])
 	case "version", "--version":
-		fmt.Printf("archify-view %s\n", buildVersion)
+		fmt.Printf("archify-viewer %s\n", buildVersion)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -68,15 +68,15 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `archify-view - archify 产物库单机查看器
+	fmt.Fprint(os.Stderr, `archify-viewer - archify 产物库单机查看器
 
 用法:
-  archify-view                                  等价于 gui
-  archify-view gui   [flags] [--no-browser]     原生窗口（不可用时回退浏览器）
-  archify-view run   [flags]                    前台起服务并打印 URL，Ctrl-C 退出
-  archify-view list  [flags] [--json] [--type T] [--limit N] [--verbose]
-  archify-view open  [flags] <id|slug|产物.html>
-  archify-view version
+  archify-viewer                                  等价于 gui
+  archify-viewer gui   [flags] [--no-browser]     原生窗口（不可用时回退浏览器）
+  archify-viewer run   [flags]                    前台起服务并打印 URL，Ctrl-C 退出
+  archify-viewer list  [flags] [--json] [--type T] [--limit N] [--verbose]
+  archify-viewer open  [flags] <id|slug|产物.html>
+  archify-viewer version
 
 flags:
 `)
@@ -369,7 +369,7 @@ func listCmd(args []string) {
 
 	if len(list) == 0 {
 		fmt.Println("没有找到产物。archify 把产物写到当时工作目录下的 .archify/<type>-<slug>-<时间戳>/；")
-		fmt.Println("可用 -root 显式指定，或在 config.yaml 里登记 roots。详见 archify-view help。")
+		fmt.Println("可用 -root 显式指定，或在 config.yaml 里登记 roots。详见 archify-viewer help。")
 		return
 	}
 	fmt.Printf("%-12s %-12s %-8s %-7s %-16s %s\n", "ID", "TYPE", "DELIVERY", "SIZE", "MODIFIED", "TITLE")
@@ -390,7 +390,7 @@ func openCmd(args []string) {
 
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "用法: archify-view open [-root PATH] <id|slug|产物.html>")
+		fmt.Fprintln(os.Stderr, "用法: archify-viewer open [-root PATH] <id|slug|产物.html>")
 		os.Exit(2)
 	}
 	target := rest[0]
@@ -414,7 +414,7 @@ func openCmd(args []string) {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "打开失败: %v（可先跑 archify-view list 取 ID）\n", err)
+		fmt.Fprintf(os.Stderr, "打开失败: %v（可先跑 archify-viewer list 取 ID）\n", err)
 		os.Exit(1)
 	}
 	if err := desktop.OpenFile(art.HTMLPath()); err != nil {

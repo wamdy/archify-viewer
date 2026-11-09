@@ -1,6 +1,6 @@
 # archify-viewer 配置样例
 # 查找顺序：当前目录 config.yaml → 用户配置目录/archify-viewer/config.yaml
-# 显式指定：archify-view gui -config D:/path/config.yaml
+# 显式指定：archify-viewer gui -config D:/path/config.yaml
 
 # 产物根（第三档优先级：仅当没有 -root、也没自动发现命中时使用）
 # path 必须是存在的目录；不存在会直接启动失败，不会静默跳过。

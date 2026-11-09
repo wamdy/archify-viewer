@@ -140,7 +140,7 @@ archify-viewer/
 | `gofmt -l .` | 输出必须为空 | ✅ |
 | `go run scripts/gen-icon.go` | 改 `assets/icon.svg` / `windows.manifest` 后重生 ICO 与 `.syso` | ✅ 改图标/清单时 |
 
-出 Windows 产物：`powershell -File scripts/build.ps1` → `build/archify-view-windows-amd64.exe`
+出 Windows 产物：`powershell -File scripts/build.ps1` → `build/archify-viewer-windows-amd64.exe`
 （`-ldflags "-s -w -H windowsgui"`，`build/` 已 gitignore）。改了 `internal/web/static/` 之后
 **必须重新 `go build` 再跑二进制**才能验证界面行为——静态资源经 `//go:embed` 编进二进制，
 `node --check` 只证语法、不证渲染。

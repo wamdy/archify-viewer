@@ -113,7 +113,7 @@ function normalizeFetchError(err) {
     return new Error("请求超时（" + TIMEOUT_MS / 1000 + " 秒），本地服务可能正忙");
   }
   if (err instanceof TypeError) {
-    return new Error("无法连接本地服务，请确认 archify-view 仍在运行");
+    return new Error("无法连接本地服务，请确认 archify-viewer 仍在运行");
   }
   return err;
 }
@@ -704,7 +704,7 @@ async function loadViewer(art) {
     res = await fetch(url, { method: "HEAD", cache: "no-store" });
   } catch (err) {
     if (seq !== state.viewerSeq) return;
-    showViewerError("无法连接本地服务，请确认 archify-view 仍在运行。" + message(err));
+    showViewerError("无法连接本地服务，请确认 archify-viewer 仍在运行。" + message(err));
     return;
   }
   if (seq !== state.viewerSeq || state.activeId !== art.id) return;
