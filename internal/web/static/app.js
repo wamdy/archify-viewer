@@ -1161,7 +1161,17 @@ function targetFor(e, selector) {
 
 function onGridClick(e) {
   const t = targetFor(e, "[data-action]");
-  if (!t) return;
+  if (!t) {
+    // 整卡可点：卡内交互元素（标签编辑区/输入框/链接）仍按各自语义处理，不误触进入。
+    const target = e && e.target;
+    if (!target || !target.closest) return;
+    const cardNode = target.closest(".card");
+    if (!cardNode) return;
+    if (target.closest("a, input, textarea, select, .card-tag-edit")) return;
+    const opener = cardNode.querySelector('[data-action="open"]');
+    if (opener) openViewer(opener.dataset.id);
+    return;
+  }
   if (t.dataset.action === "open") openViewer(t.dataset.id);
   else if (t.dataset.action === "copy") doCopy(t.dataset.copy, t);
   else if (t.dataset.action === "tag-filter") toggleTag(t.dataset.tag);

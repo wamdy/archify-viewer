@@ -320,7 +320,10 @@ body {
   opacity: 0;
   transition: opacity .18s ease;
 }
+.card { cursor: pointer; }
 .card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: var(--shadow-md); }
+/* 卡内交互元素恢复各自光标，避免「整卡可点」误导 */
+.card .btn, .card .tag-chip, .card input, .card a, .card-thumb-refresh { cursor: pointer; }
 .card:hover::before { opacity: .9; }
 .card-flag { border-left: 3px solid var(--bad); }
 
