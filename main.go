@@ -29,6 +29,7 @@ import (
 	"archify-viewer/internal/config"
 	"archify-viewer/internal/desktop"
 	"archify-viewer/internal/index"
+	"archify-viewer/internal/thumbs"
 	"archify-viewer/internal/web"
 )
 
@@ -177,6 +178,19 @@ func settingsOption(editor *config.Editor) web.Option {
 	return web.WithSettings(editor)
 }
 
+// thumbsOption 装配缩略图派生缓存（%AppData%/archify-viewer/thumbs）。
+// 取不到用户配置目录时返回 nil：/t/{id} 回 404 thumb_unavailable，前端保持占位，
+// 不伪装成功（能力缺失按既有口径降级）。
+func thumbsOption() web.Option {
+	p, err := config.UserConfigPath()
+	if err != nil {
+		log.Printf("缩略图缓存不可用（定位用户配置目录失败）: %v", err)
+		return nil
+	}
+	st := thumbs.NewStore(filepath.Join(filepath.Dir(p), "thumbs"), thumbs.NewBrowserCapturer(), log.Default())
+	return web.ThumbsOption(st)
+}
+
 // newNativeWindow 把上游 go-webview2 的 panic 收敛成可判定的 error。
 // 该库 CreateCoreWebView2ControllerCompleted 对 nil controller 未判空（chromium.go:190），
 // 在 WebView2 运行时异常或同一 exe 已有实例占用用户数据目录时会 panic；
@@ -202,7 +216,7 @@ func guiCmd(args []string) {
 	logIndex(idx)
 
 	editor := newSettingsEditor(cfg, lf.configPath)
-	srv, err := web.New(cfg, idx, store, settingsOption(editor))
+	srv, err := web.New(cfg, idx, store, settingsOption(editor), thumbsOption())
 	if err != nil {
 		reportFatal(err)
 	}
@@ -276,7 +290,7 @@ func runCmd(args []string) {
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
 
-	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)))
+	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)), thumbsOption())
 	if err != nil {
 		reportFatal(err)
 	}

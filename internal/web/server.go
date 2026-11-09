@@ -23,6 +23,7 @@ import (
 
 	"archify-viewer/internal/config"
 	"archify-viewer/internal/index"
+	"archify-viewer/internal/thumbs"
 )
 
 //go:embed static
@@ -49,6 +50,9 @@ type Server struct {
 	store *index.Store
 
 	settings SettingsStore
+
+	// thumbs 是缩略图派生缓存；nil 表示未装配（/t/{id} 返回 thumb_unavailable）。
+	thumbs *thumbs.Store
 
 	srv *http.Server
 	ln  net.Listener
@@ -87,6 +91,7 @@ func (s *Server) router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/index", s.handleIndex)
 	mux.HandleFunc("GET /a/{id}", s.handleArtifact)
+	mux.HandleFunc("GET /t/{id}", s.handleThumb)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
 	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
@@ -142,9 +147,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // 但它不改任何产物文件、也不引入写面，红线 1 不受影响。
 func (s *Server) Rescan() error {
 	idx, store := index.Scan(s.cfg)
+	valid := make(map[string]struct{}, len(idx.Artifacts))
+	for _, a := range idx.Artifacts {
+		valid[thumbKey(a)] = struct{}{}
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.idx, s.store = idx, store
+	st := s.thumbs
+	s.mu.Unlock()
+	// 缓存清理放在锁外：大目录扫描不该阻塞请求。
+	if st != nil {
+		st.GC(valid)
+	}
 	return nil
 }
 

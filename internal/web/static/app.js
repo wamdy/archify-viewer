@@ -227,7 +227,14 @@ function card(a) {
   const warnings = (a.warnings || []).filter((w) => w !== "CANDIDATE-MISSING" && w !== "SIDECAR-MISSING");
 
   // 事件统一委托到 grid：渲染重建卡片后无需重新绑定，也不会残留旧监听器。
+  // 缩略图同样走委托（load/error 不冒泡，用捕获阶段）：成功后藏掉占位块，
+  // 失败一次即标 broken 不再重试——404 会把浏览器打回重试环。
   node.innerHTML =
+    '<div class="card-thumb">' +
+      '<img class="card-thumb-img" loading="lazy" decoding="async" alt="" ' +
+        'src="/t/' + esc(a.id) + '" data-id="' + esc(a.id) + '">' +
+      '<span class="card-thumb-ph" aria-hidden="true">' + esc(a.type) + "</span>" +
+    "</div>" +
     '<div class="card-head">' + tagsHtml(a) + "</div>" +
     '<h3 class="card-title">' + esc(a.title) + "</h3>" +
     (a.subtitle ? '<p class="card-sub">' + esc(a.subtitle) + "</p>" : "") +
@@ -873,6 +880,18 @@ function onGridClick(e) {
   else if (t.dataset.action === "copy") doCopy(t.dataset.copy, t);
 }
 
+// 缩略图用捕获阶段委托：load/error 不冒泡，但会经过祖先节点。
+function onThumbEvent(e, broken) {
+  const img = e.target;
+  if (!img || !img.classList || !img.classList.contains("card-thumb-img")) return;
+  if (broken) {
+    img.classList.add("is-broken"); // 藏图露占位；不重试，避免 404 打转
+    return;
+  }
+  const box = img.parentNode;
+  if (box && box.classList) box.classList.add("has-img");
+}
+
 function onViewerClick(e) {
   const t = targetFor(e, "[data-action]");
   if (!t) return;
@@ -943,6 +962,8 @@ function bind() {
   el("btn-refresh").addEventListener("click", () => { reload(true); });
   el("btn-empty-rescan").addEventListener("click", () => { reload(true); });
   el("btn-empty-settings").addEventListener("click", openSettings);
+  el("grid").addEventListener("load", (e) => onThumbEvent(e, false), true);
+  el("grid").addEventListener("error", (e) => onThumbEvent(e, true), true);
   el("btn-retry").addEventListener("click", () => { reload(!!state.index); });
   el("btn-clear").addEventListener("click", clearFilters);
   el("btn-clear-2").addEventListener("click", clearFilters);

@@ -252,6 +252,39 @@ body {
   box-shadow: var(--shadow-sm);
   transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
+
+/* 缩略图槽位：图片全宽出血到卡片边缘（卡片 padding 16/18），占位块在加载前与失败时可见。
+   图片失败只标 is-broken 隐藏自己，不再重试——404 会把浏览器打回重试环。 */
+.card-thumb {
+  position: relative;
+  margin: -16px -18px 0;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.card-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+.card-thumb-img.is-broken { display: none; }
+.card-thumb-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: linear-gradient(160deg, var(--surface-2), var(--surface-3));
+}
+.card-thumb.has-img .card-thumb-ph { display: none; }
 .card::before {
   content: "";
   position: absolute; inset: 0 0 auto;

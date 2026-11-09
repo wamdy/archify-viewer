@@ -18,7 +18,9 @@
 **库层是它刻意不做的边界**（其 `references/viewer-runtime.md` 明写不要为 viewer-only 能力加托管服务）。
 
 **范围边界（YAGNI）**：个人本地工具，不进 appollo 运行架构（无 GraphQL / DB / 服务依赖）；
-**只读**产物库，不渲染、不校验、不改写；无用户体系、无对外监听。
+**只读**产物库：不校验、不改写产物；viewer 自身**不渲染**——列表缩略图由**外部无头浏览器**
+（系统 Chrome / Edge）对 `/a/{id}` 截图后落派生缓存（`%AppData%/archify-viewer/thumbs/`），
+产物字节前后不变。无用户体系、无对外监听。
 共享服务端（P2）与平台资产化（P3）在主仓 #1087 票面明确划在本仓之外。
 
 ---
@@ -42,12 +44,16 @@ archify-viewer/
 │
 ├── internal/config/
 │   ├── config.go               # 三档 roots 发现、ValidateAddr/IsLoopbackHost、运行时 RWMutex 快照
-│   └── settings.go             # ⭐ 全仓唯一写面：Editor（原子写 config.yaml + 即时生效）
+│   └── settings.go             # ⭐ 配置写面：Editor（原子写 config.yaml + 即时生效）
 ├── internal/index/             # ⭐ 核心：只读扫描 + 解析 + ID 白名单
 │   ├── index.go                # Scan / readArtifact / parseDirName / selectMainFile / Store.Find
 │   └── digest.go               # idFor(htmlAbs)[:12]、SHA256File（只读不变性断言用）
-├── internal/web/               # HTTP 面（产物只读 + 设置端点）
-│   ├── server.go               # mux：GET / 、/api/index(?rescan=1)、/a/{id}、/api/settings*；//go:embed static
+├── internal/thumbs/            # ⭐ 缩略图派生缓存（全仓第二个写面，只写缓存目录）
+│   ├── thumbs.go               # Store：命中读盘 / 同 key 单飞 / 全局并发 1 / 原子落盘 / GC
+│   └── browser.go              # BrowserCapturer：系统 Chrome/Edge 无头截图（不自写 WebView2 COM）
+├── internal/web/               # HTTP 面（产物只读 + 缩略图 + 设置端点）
+│   ├── server.go               # mux：GET / 、/api/index(?rescan=1)、/a/{id}、/t/{id}、/api/settings*；//go:embed static
+│   ├── thumb.go                # GET /t/{id}：取即建；id 必须先在索引中，缓存键来自索引字段
 │   ├── settings.go             # SettingsStore 接口 + 三个设置端点；包内不得出现写文件调用
 │   ├── listen.go               # Bind：非回环返回 error（拒绝启动，不降级）
 │   └── static/                 # ⭐ 前端：零构建 vanilla JS（index.html / app.js / style.css / favicon.svg）
@@ -61,7 +67,8 @@ archify-viewer/
 
 分层约束：`internal/index` 不 import `net/http`；`internal/web` 与 `internal/index` 里不得出现任何写
 文件系统调用（`os.WriteFile`/`Remove`/`Rename`/`MkdirAll`）。配置写入只允许在
-`internal/config.Editor`：`web` 只依赖 `SettingsStore` 接口，产物目录与用户配置文件严格隔离。
+`internal/config.Editor`；缩略图缓存写入只允许在 `internal/thumbs`（`web` 通过 `thumbs.Store`
+调用，自身仍不写盘）：`web` 只依赖 `SettingsStore` 接口，产物目录与用户配置文件严格隔离。
 运行期可变的 `Roots` / `RootSource` / `GUI.CloseAction` 由 `config.Config` 的 `RWMutex` 保护，
 `index.Scan` 必须走 `RootSnapshot()` / `Source()`，不得裸读字段（设置页与扫描会并发）。
 
@@ -98,6 +105,11 @@ archify-viewer/
   而产物常带真实仓名、文件路径、commit SHA 与内部架构，等同机密图纸）。显式端口被占 ⇒ 报错退出，
   不静默换端口。
 - **缓存**：所有响应 `Cache-Control: no-store`（产物自带 hash 深链，串台缓存会误导人）。
+- **缩略图派生缓存**：`GET /t/{id}` 取即建（命中读盘；未命中同 key 单飞、全局并发 1），
+  id 必须先在索引中存在；缓存键 `{id}-{mtime}-{size}`，目录 `%AppData%/archify-viewer/thumbs/`，
+  随 `Rescan` 清理陈旧项。写盘只发生在 `internal/thumbs`（`internal/web` 自身仍无写调用）。
+  采集用系统 Chrome/Edge **无头进程** + 一次性 profile（不自写 WebView2 COM）；
+  无浏览器 ⇒ 404 `thumb_unavailable`，前端保持类型占位，不伪装成功。
 - 超时：`ReadHeaderTimeout=5s`、`WriteTimeout=60s`、`IdleTimeout=30s`。
 - **设置写面**：`GET /api/settings`、`POST /api/settings/roots`、`POST /api/settings/close-action`
   只在 `gui` / `run` 装配，未装配返回 503（能力缺失不伪装成功）。请求体限 1 MiB；
