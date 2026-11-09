@@ -216,3 +216,53 @@ func TestRebuildUnavailableWithoutStore(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+func TestRebuildSingleThumbOnlyTouchesThatOne(t *testing.T) {
+	capt := &countingCapturer{}
+	srv, id, dir := newThumbServer(t, capt)
+	// 先让唯一一件生成好
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/t/"+id, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("首次生成 status = %d", rec.Code)
+	}
+
+	body := `{"id":"` + id + `"}`
+	rec2 := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/thumbs/rebuild", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	var out struct {
+		Removed int `json:"removed"`
+		Queued  int `json:"queued"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Removed != 1 || out.Queued != 1 {
+		t.Fatalf("single rebuild = %+v, want removed=1 queued=1", out)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if files, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(files) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("单件重建后缓存未恢复")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 未知 id → 404
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/api/thumbs/rebuild", strings.NewReader(`{"id":"000000000000"}`))
+	req3.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusNotFound {
+		t.Fatalf("unknown id status = %d", rec3.Code)
+	}
+}

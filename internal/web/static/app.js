@@ -247,6 +247,8 @@ function card(a) {
       '<img class="card-thumb-img" loading="lazy" decoding="async" alt="" ' +
         'src="/t/' + esc(a.id) + (state.thumbBust ? "?v=" + state.thumbBust : "") + '" data-id="' + esc(a.id) + '">' +
       '<span class="card-thumb-ph" aria-hidden="true">' + esc(a.type) + "</span>" +
+      '<button class="card-thumb-refresh" data-action="thumb-refresh" data-id="' + esc(a.id) + '"' +
+        ' title="刷新这张图的缩略图" aria-label="刷新缩略图">⟳</button>' +
     "</div>" +
     '<div class="card-head">' + tagsHtml(a) + "</div>" +
     '<h3 class="card-title">' + esc(a.title) + "</h3>" +
@@ -1164,6 +1166,7 @@ function onGridClick(e) {
   else if (t.dataset.action === "copy") doCopy(t.dataset.copy, t);
   else if (t.dataset.action === "tag-filter") toggleTag(t.dataset.tag);
   else if (t.dataset.action === "tag-edit") openTagEditor(t.dataset.id, t);
+  else if (t.dataset.action === "thumb-refresh") refreshThumb(t.dataset.id, t);
   else if (t.dataset.action === "tag-del") {
     const a = artById(t.dataset.id);
     if (a) saveTags(a, (a.tags || []).filter((x) => x !== t.dataset.tag));
@@ -1205,6 +1208,43 @@ function scheduleThumbRefresh(delays) {
       if (state.view !== "list") return;
       state.thumbBust = Date.now();
       render();
+    }, ms);
+  });
+}
+
+// 单件刷新缩略图：只动这一张，成功后分两次带版本重载图片（生成约 2 秒）。
+function refreshThumb(id, btn) {
+  if (!id) return;
+  if (btn) { btn.disabled = true; btn.classList.add("is-busy"); }
+  requestJSON("/api/thumbs/rebuild", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: id }),
+  })
+    .then((j) => {
+      toast("已重排该图缩略图（" + ((j && j.queued) || 0) + " 张）", "ok");
+      reloadCardThumb(id);
+    })
+    .catch((err) => toast("刷新缩略图失败：" + (err && err.message ? err.message : "网络错误"), "err"))
+    .finally(() => {
+      if (btn) { btn.disabled = false; btn.classList.remove("is-busy"); }
+    });
+}
+
+function reloadCardThumb(id) {
+  const trigger = document.querySelector('.card [data-action="thumb-refresh"][data-id="' + id + '"]');
+  const cardNode = trigger && trigger.closest ? trigger.closest(".card") : null;
+  if (!cardNode) return;
+  const box = cardNode.querySelector(".card-thumb");
+  const img = cardNode.querySelector(".card-thumb-img");
+  if (!box || !img) return;
+  box.classList.remove("has-img"); // 回到占位态，避免旧图假装是新的
+  const src = "/t/" + id;
+  [1800, 4500].forEach((ms) => {
+    setTimeout(() => {
+      if (!document.body.contains(img)) return;
+      img.classList.remove("is-broken");
+      img.src = src + "?v=" + Date.now();
     }, ms);
   });
 }

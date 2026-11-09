@@ -285,6 +285,33 @@ body {
   background: linear-gradient(160deg, var(--surface-2), var(--surface-3));
 }
 .card-thumb.has-img .card-thumb-ph { display: none; }
+
+/* 单件刷新缩略图：悬停显形，点按时转圈。 */
+.card-thumb-refresh {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease, border-color .15s ease;
+}
+.card:hover .card-thumb-refresh,
+.card-thumb-refresh:focus-visible { opacity: 1; }
+.card-thumb-refresh:hover { color: var(--accent); border-color: var(--accent); }
+.card-thumb-refresh.is-busy { opacity: 1; cursor: progress; animation: thumb-spin 1s linear infinite; }
+@keyframes thumb-spin { to { transform: rotate(360deg); } }
 .card::before {
   content: "";
   position: absolute; inset: 0 0 auto;

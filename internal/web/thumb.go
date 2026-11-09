@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -82,6 +84,8 @@ func (s *Server) thumbItems() map[string]string {
 }
 
 // handleRebuildThumbs 手动重建：先删当前索引范围的缓存，再后台排队重生成。
+// handleRebuildThumbs 重建缩略图：请求体带 {"id": "..."} 时只重建该件，
+// 不带（或空体）则重建当前索引范围内的全部。
 func (s *Server) handleRebuildThumbs(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	st := s.thumbs
@@ -90,7 +94,29 @@ func (s *Server) handleRebuildThumbs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "thumb_unavailable"})
 		return
 	}
+
+	var req struct {
+		ID string `json:"id"`
+	}
+	// 空请求体合法（全量重建）；解析失败只当作没带 id。
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req)
+
 	items := s.thumbItems()
+	if req.ID != "" {
+		s.mu.RLock()
+		art := findArtifact(s.store, req.ID)
+		s.mu.RUnlock()
+		if art == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown_artifact"})
+			return
+		}
+		key := thumbKey(art)
+		removed := st.DeleteKeys([]string{key})
+		queued := st.EnsureMissing(map[string]string{key: items[key]})
+		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "queued": queued})
+		return
+	}
+
 	keys := make([]string, 0, len(items))
 	for k := range items {
 		keys = append(keys, k)
