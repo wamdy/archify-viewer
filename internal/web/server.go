@@ -155,7 +155,8 @@ func (s *Server) Rescan() error {
 	thumbsValid := make(map[string]struct{}, len(idx.Artifacts))
 	tagsValid := make(map[string]struct{}, len(idx.Artifacts))
 	for _, a := range idx.Artifacts {
-		thumbsValid[thumbKey(a)] = struct{}{}
+		thumbsValid[thumbKeyTheme(a, "light")] = struct{}{}
+		thumbsValid[thumbKeyTheme(a, "dark")] = struct{}{}
 		tagsValid[tags.Key(a.Type, a.Slug)] = struct{}{}
 	}
 	s.mu.Lock()
@@ -167,7 +168,7 @@ func (s *Server) Rescan() error {
 	if st != nil {
 		st.GC(thumbsValid)
 		// 重扫后自动补齐缺失的缩略图（后台串行，不阻塞本次响应）。
-		st.EnsureMissing(s.thumbItems())
+		st.EnsureMissing(s.thumbJobs())
 	}
 	if tg != nil {
 		if n, err := tg.GC(tagsValid); err != nil {

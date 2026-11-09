@@ -245,7 +245,7 @@ function card(a) {
   node.innerHTML =
     '<div class="card-thumb">' +
       '<img class="card-thumb-img" loading="lazy" decoding="async" alt="" ' +
-        'src="/t/' + esc(a.id) + (state.thumbBust ? "?v=" + state.thumbBust : "") + '" data-id="' + esc(a.id) + '">' +
+        'src="' + thumbSrc(a.id) + '" data-id="' + esc(a.id) + '">' +
       '<span class="card-thumb-ph" aria-hidden="true">' + esc(a.type) + "</span>" +
       '<button class="card-thumb-refresh" data-action="thumb-refresh" data-id="' + esc(a.id) + '"' +
         ' title="刷新这张图的缩略图" aria-label="刷新缩略图">⟳</button>' +
@@ -348,6 +348,7 @@ function applyTheme(pref) {
   try { localStorage.setItem(THEME_KEY, valid); } catch (_) { /* 隐私模式忽略 */ }
   const f = el("frame");
   if (f && !f.hidden) dressFrame(f);
+  if (state.view === "list") render(); // 缩略图按主题换一套
   renderThemeButtons();
 }
 
@@ -908,6 +909,12 @@ function artById(id) {
   return null;
 }
 
+// 缩略图地址带主题：查看器切到深色就取深色那张（两套缓存各自独立）。
+function thumbSrc(id) {
+  return "/t/" + id + "?theme=" + resolveTheme(state.theme) +
+    (state.thumbBust ? "&v=" + state.thumbBust : "");
+}
+
 function tagChipsHtml(a) {
   const tags = a.tags || [];
   if (!tags.length) return "";
@@ -1249,12 +1256,12 @@ function reloadCardThumb(id) {
   const img = cardNode.querySelector(".card-thumb-img");
   if (!box || !img) return;
   box.classList.remove("has-img"); // 回到占位态，避免旧图假装是新的
-  const src = "/t/" + id;
+  const theme = resolveTheme(state.theme);
   [1800, 4500].forEach((ms) => {
     setTimeout(() => {
       if (!document.body.contains(img)) return;
       img.classList.remove("is-broken");
-      img.src = src + "?v=" + Date.now();
+      img.src = "/t/" + id + "?theme=" + theme + "&v=" + Date.now();
     }, ms);
   });
 }

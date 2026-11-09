@@ -33,7 +33,11 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	png, err := st.GetOrCreate(r.Context(), thumbKey(art), base+"/a/"+art.ID)
+	theme := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("theme")))
+	if theme != "dark" {
+		theme = "light"
+	}
+	png, err := st.GetOrCreate(r.Context(), thumbKeyTheme(art, theme), base+"/a/"+art.ID, theme)
 	if err != nil {
 		code := "thumb_failed"
 		if errors.Is(err, thumbs.ErrUnavailable) {
@@ -54,6 +58,32 @@ func thumbKey(a *index.Artifact) string {
 	return fmt.Sprintf("%s-%d-%d", a.ID, a.ModTime, a.Size)
 }
 
+// thumbKeyTheme 让亮/暗两套缩略图各占一个缓存键：查看器切主题时取对应那张。
+func thumbKeyTheme(a *index.Artifact, theme string) string {
+	if theme != "dark" {
+		theme = "light"
+	}
+	return thumbKey(a) + "-" + theme
+}
+
+// thumbJobs 返回当前索引的「双主题」待生成任务。
+func (s *Server) thumbJobs() []thumbs.Job {
+	s.mu.RLock()
+	base := strings.TrimRight(s.url, "/")
+	var arts []*index.Artifact
+	if s.idx != nil {
+		arts = s.idx.Artifacts
+	}
+	s.mu.RUnlock()
+	jobs := make([]thumbs.Job, 0, len(arts)*2)
+	for _, a := range arts {
+		for _, theme := range []string{"light", "dark"} {
+			jobs = append(jobs, thumbs.Job{Key: thumbKeyTheme(a, theme), URL: base + "/a/" + a.ID, Theme: theme})
+		}
+	}
+	return jobs
+}
+
 func findArtifact(st *index.Store, id string) *index.Artifact {
 	if st == nil || id == "" {
 		return nil
@@ -64,23 +94,6 @@ func findArtifact(st *index.Store, id string) *index.Artifact {
 		}
 	}
 	return nil
-}
-
-// thumbItems 返回当前索引的「缓存键 → 采集 URL」映射。
-// 采集地址与真实查看同源（/a/{id}），保证产物内相对资源行为一致。
-func (s *Server) thumbItems() map[string]string {
-	s.mu.RLock()
-	base := strings.TrimRight(s.url, "/")
-	var arts []*index.Artifact
-	if s.idx != nil {
-		arts = s.idx.Artifacts
-	}
-	s.mu.RUnlock()
-	out := make(map[string]string, len(arts))
-	for _, a := range arts {
-		out[thumbKey(a)] = base + "/a/" + a.ID
-	}
-	return out
 }
 
 // handleRebuildThumbs 手动重建：先删当前索引范围的缓存，再后台排队重生成。
@@ -101,7 +114,7 @@ func (s *Server) handleRebuildThumbs(w http.ResponseWriter, r *http.Request) {
 	// 空请求体合法（全量重建）；解析失败只当作没带 id。
 	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req)
 
-	items := s.thumbItems()
+	jobs := s.thumbJobs()
 	if req.ID != "" {
 		s.mu.RLock()
 		art := findArtifact(s.store, req.ID)
@@ -110,19 +123,26 @@ func (s *Server) handleRebuildThumbs(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown_artifact"})
 			return
 		}
-		key := thumbKey(art)
-		removed := st.DeleteKeys([]string{key})
-		queued := st.EnsureMissing(map[string]string{key: items[key]})
+		// 单件刷新同时重建亮/暗两张，切主题时不用等。
+		keys := []string{thumbKeyTheme(art, "light"), thumbKeyTheme(art, "dark")}
+		removed := st.DeleteKeys(keys)
+		keep := make([]thumbs.Job, 0, 2)
+		for _, j := range jobs {
+			if j.Key == keys[0] || j.Key == keys[1] {
+				keep = append(keep, j)
+			}
+		}
+		queued := st.EnsureMissing(keep)
 		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "queued": queued})
 		return
 	}
 
-	keys := make([]string, 0, len(items))
-	for k := range items {
-		keys = append(keys, k)
+	keys := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		keys = append(keys, j.Key)
 	}
 	removed := st.DeleteKeys(keys)
-	queued := st.EnsureMissing(items)
+	queued := st.EnsureMissing(jobs)
 	writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "queued": queued})
 }
 

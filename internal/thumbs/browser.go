@@ -20,6 +20,7 @@ const (
 	viewportW      = 1280
 	viewportH      = 800
 	virtualBudget  = 2000 // 毫秒；实测 4000 会让等满的请求多花 ~5s
+	darkLoadWaitMs = 4000 // 深色走 --timeout；实测 4000 出图完整且 9s 内退出
 )
 
 // BrowserCapturer 用系统已装的 Chrome / Edge / Chromium 无头模式截图。
@@ -36,8 +37,10 @@ func NewBrowserCapturer() *BrowserCapturer {
 	return &BrowserCapturer{timeout: browserTimeout}
 }
 
-// Capture 采集 url 的首屏视口截图，返回 PNG 字节。临时 profile 与截图文件用后即删。
-func (c *BrowserCapturer) Capture(ctx context.Context, url string) ([]byte, error) {
+// Capture 采集 url 的首屏视口截图，返回 PNG 字节。theme=dark 时用 --force-dark-mode
+// 让产物走深色配色（产物自己读 prefers-color-scheme），得到与查看器主题一致的缩略图。
+// 临时 profile 与截图文件用后即删。
+func (c *BrowserCapturer) Capture(ctx context.Context, url, theme string) ([]byte, error) {
 	bin := ""
 	timeout := browserTimeout
 	if c != nil {
@@ -60,7 +63,7 @@ func (c *BrowserCapturer) Capture(ctx context.Context, url string) ([]byte, erro
 	defer os.RemoveAll(tmp)
 
 	shot := filepath.Join(tmp, "shot.png")
-	args := captureArgs(filepath.Join(tmp, "profile"), shot, url)
+	args := captureArgs(filepath.Join(tmp, "profile"), shot, url, theme)
 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -91,8 +94,9 @@ func (c *BrowserCapturer) Capture(ctx context.Context, url string) ([]byte, erro
 }
 
 // captureArgs 固定采集参数：顶部 1280×800 视口、独立临时 profile、禁用后台网络与扩展。
-func captureArgs(profile, shot, url string) []string {
-	return []string{
+// 主题由调用方的引导页写入 localStorage，这里不依赖 prefers-color-scheme。
+func captureArgs(profile, shot, url, theme string) []string {
+	args := []string{
 		"--headless=new",
 		"--disable-gpu",
 		"--hide-scrollbars",
@@ -105,9 +109,15 @@ func captureArgs(profile, shot, url string) []string {
 		"--user-data-dir=" + profile,
 		"--screenshot=" + shot,
 		fmt.Sprintf("--window-size=%d,%d", viewportW, viewportH),
-		fmt.Sprintf("--virtual-time-budget=%d", virtualBudget),
-		url,
 	}
+	if theme == "dark" {
+		// 深色：--force-dark-mode 让产物按 prefers-color-scheme 走深色；
+		// 该 flag 下虚拟时间预算会挂住进程，改用固定超时收口（实测 ~9s 内退出）。
+		args = append(args, "--force-dark-mode", fmt.Sprintf("--timeout=%d", darkLoadWaitMs))
+	} else {
+		args = append(args, fmt.Sprintf("--virtual-time-budget=%d", virtualBudget))
+	}
+	return append(args, url)
 }
 
 // resolveBrowser 决定用哪个浏览器：环境变量 → PATH → 各平台常见安装路径。

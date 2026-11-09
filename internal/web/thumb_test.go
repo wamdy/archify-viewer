@@ -22,7 +22,7 @@ type countingCapturer struct {
 	err   error
 }
 
-func (c *countingCapturer) Capture(ctx context.Context, url string) ([]byte, error) {
+func (c *countingCapturer) Capture(ctx context.Context, url, theme string) ([]byte, error) {
 	atomic.AddInt32(&c.calls, 1)
 	c.url = url
 	if c.err != nil {
@@ -185,13 +185,16 @@ func TestRebuildThumbsDeletesAndRequeues(t *testing.T) {
 	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Removed != 1 || out.Queued != 1 {
-		t.Fatalf("rebuild = %+v, want removed=1 queued=1", out)
+	if out.Removed != 1 || out.Queued != 2 {
+		t.Fatalf("rebuild = %+v, want removed=1 queued=2（亮/暗两张）", out)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if files, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(files) == 1 {
+		files, _ := filepath.Glob(filepath.Join(dir, "*.png"))
+		tmp, _ := filepath.Glob(filepath.Join(dir, ".tmp-*"))
+		if len(files) >= 2 && len(tmp) == 0 {
+			time.Sleep(50 * time.Millisecond) // 让 goroutine 收尾，避免 TempDir 清理竞态
 			break
 		}
 		if time.Now().After(deadline) {
@@ -199,8 +202,8 @@ func TestRebuildThumbsDeletesAndRequeues(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := atomic.LoadInt32(&capt.calls); got != 2 {
-		t.Errorf("重建应再采集一次，calls=%d", got)
+	if got := atomic.LoadInt32(&capt.calls); got < 3 {
+		t.Errorf("重建应补齐亮/暗两张，calls=%d", got)
 	}
 }
 
@@ -242,13 +245,16 @@ func TestRebuildSingleThumbOnlyTouchesThatOne(t *testing.T) {
 	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Removed != 1 || out.Queued != 1 {
-		t.Fatalf("single rebuild = %+v, want removed=1 queued=1", out)
+	if out.Removed != 1 || out.Queued != 2 {
+		t.Fatalf("single rebuild = %+v, want removed=1 queued=2（亮/暗两张）", out)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if files, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(files) == 1 {
+		files, _ := filepath.Glob(filepath.Join(dir, "*.png"))
+		tmp, _ := filepath.Glob(filepath.Join(dir, ".tmp-*"))
+		if len(files) >= 2 && len(tmp) == 0 {
+			time.Sleep(50 * time.Millisecond)
 			break
 		}
 		if time.Now().After(deadline) {

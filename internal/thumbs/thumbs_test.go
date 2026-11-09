@@ -30,7 +30,7 @@ type fakeCapturer struct {
 	fn    func(ctx context.Context, url string) ([]byte, error)
 }
 
-func (f *fakeCapturer) Capture(ctx context.Context, url string) ([]byte, error) {
+func (f *fakeCapturer) Capture(ctx context.Context, url, theme string) ([]byte, error) {
 	atomic.AddInt32(&f.calls, 1)
 	if f.gate != nil {
 		select {
@@ -50,11 +50,11 @@ func TestHitDoesNotCaptureAgain(t *testing.T) {
 	f := &fakeCapturer{}
 	s := NewStore(dir, f, nil)
 
-	first, err := s.GetOrCreate(context.Background(), "abc-1-2", "http://127.0.0.1:1/a/abc")
+	first, err := s.GetOrCreate(context.Background(), "abc-1-2", "http://127.0.0.1:1/a/abc", "light")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.GetOrCreate(context.Background(), "abc-1-2", "http://127.0.0.1:1/a/abc")
+	second, err := s.GetOrCreate(context.Background(), "abc-1-2", "http://127.0.0.1:1/a/abc", "light")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestConcurrentSameKeySingleflight(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = s.GetOrCreate(context.Background(), "same-7-8", "http://127.0.0.1:1/a/same")
+			results[i], errs[i] = s.GetOrCreate(context.Background(), "same-7-8", "http://127.0.0.1:1/a/same", "light")
 		}(i)
 	}
 	// 等到第一个采集真正开始，再放行；期间其余请求必须挂起而不是各采一次。
@@ -131,7 +131,7 @@ func TestDifferentKeysSerialize(t *testing.T) {
 		wg.Add(1)
 		go func(k string) {
 			defer wg.Done()
-			if _, err := s.GetOrCreate(context.Background(), k, "http://127.0.0.1:1/a/x"); err != nil {
+			if _, err := s.GetOrCreate(context.Background(), k, "http://127.0.0.1:1/a/x", "light"); err != nil {
 				t.Errorf("%s: %v", k, err)
 			}
 		}(key)
@@ -150,7 +150,7 @@ func TestCorruptCacheIsRebuilt(t *testing.T) {
 	}
 	f := &fakeCapturer{}
 	s := NewStore(dir, f, nil)
-	b, err := s.GetOrCreate(context.Background(), "bad-1-1", "http://127.0.0.1:1/a/bad")
+	b, err := s.GetOrCreate(context.Background(), "bad-1-1", "http://127.0.0.1:1/a/bad", "light")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestGCOnlyDropsUnknownAndLeftovers(t *testing.T) {
 
 func TestNilAndUnsafeInputs(t *testing.T) {
 	var nilStore *Store
-	if _, err := nilStore.GetOrCreate(context.Background(), "k-1-1", "u"); !errors.Is(err, ErrUnavailable) {
+	if _, err := nilStore.GetOrCreate(context.Background(), "k-1-1", "u", "light"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("nil store err = %v", err)
 	}
 	if got := nilStore.Dir(); got != "" {
@@ -207,11 +207,11 @@ func TestNilAndUnsafeInputs(t *testing.T) {
 
 	s := NewStore(t.TempDir(), &fakeCapturer{}, nil)
 	for _, bad := range []string{"", "../escape", "a/b", "A-1-1", "x-1-1.png"} {
-		if _, err := s.GetOrCreate(context.Background(), bad, "u"); !errors.Is(err, ErrFailed) {
+		if _, err := s.GetOrCreate(context.Background(), bad, "u", "light"); !errors.Is(err, ErrFailed) {
 			t.Errorf("key %q err = %v, want ErrFailed", bad, err)
 		}
 	}
-	if _, err := NewStore("", nil, nil).GetOrCreate(context.Background(), "k-1-1", "u"); !errors.Is(err, ErrUnavailable) {
+	if _, err := NewStore("", nil, nil).GetOrCreate(context.Background(), "k-1-1", "u", "light"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("空目录 err = %v", err)
 	}
 }
@@ -222,7 +222,7 @@ func TestCaptureErrorPropagatesWithoutCache(t *testing.T) {
 		return nil, ErrUnavailable
 	}}
 	s := NewStore(dir, f, nil)
-	if _, err := s.GetOrCreate(context.Background(), "e-1-1", "u"); !errors.Is(err, ErrUnavailable) {
+	if _, err := s.GetOrCreate(context.Background(), "e-1-1", "u", "light"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "e-1-1.png")); !os.IsNotExist(err) {
@@ -236,14 +236,14 @@ func TestMissingDeleteAndEnsure(t *testing.T) {
 	s := NewStore(dir, f, nil)
 	ctx := context.Background()
 
-	if _, err := s.GetOrCreate(ctx, "cached-1-1", "u"); err != nil {
+	if _, err := s.GetOrCreate(ctx, "cached-1-1", "u", "light"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.Missing([]string{"cached-1-1", "new-2-2", "../bad"}); len(got) != 1 || got[0] != "new-2-2" {
 		t.Fatalf("Missing = %v", got)
 	}
 
-	queued := s.EnsureMissing(map[string]string{"cached-1-1": "u", "new-2-2": "u"})
+	queued := s.EnsureMissing([]Job{{Key: "cached-1-1", URL: "u", Theme: "light"}, {Key: "new-2-2", URL: "u", Theme: "light"}})
 	if queued != 1 {
 		t.Fatalf("EnsureMissing queued = %d, want 1（已存在的必须跳过）", queued)
 	}

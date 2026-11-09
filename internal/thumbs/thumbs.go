@@ -31,9 +31,17 @@ var (
 	ErrFailed = errors.New("缩略图生成失败")
 )
 
-// Capturer 把 URL 渲染成 PNG 字节。实现不得改动任何产物文件。
+// Capturer 把 URL 渲染成 PNG 字节。theme 只会是 "light" / "dark"。
+// 实现不得改动任何产物文件。
 type Capturer interface {
-	Capture(ctx context.Context, url string) ([]byte, error)
+	Capture(ctx context.Context, url, theme string) ([]byte, error)
+}
+
+// Job 是一次待生成的缩略图：缓存键、采集地址、主题。
+type Job struct {
+	Key   string
+	URL   string
+	Theme string
 }
 
 type call struct {
@@ -77,7 +85,7 @@ func (s *Store) Dir() string {
 
 // GetOrCreate 返回 key 对应的 PNG：命中直接读盘，未命中采集一次并落盘。
 // 同一 key 的并发调用共享同一次采集；不同 key 之间串行。
-func (s *Store) GetOrCreate(ctx context.Context, key, url string) ([]byte, error) {
+func (s *Store) GetOrCreate(ctx context.Context, key, url, theme string) ([]byte, error) {
 	if s == nil || s.dir == "" {
 		return nil, ErrUnavailable
 	}
@@ -127,7 +135,10 @@ func (s *Store) GetOrCreate(ctx context.Context, key, url string) ([]byte, error
 		return nil, c.err
 	}
 
-	png, err := s.cap.Capture(ctx, url)
+	if theme != "dark" {
+		theme = "light"
+	}
+	png, err := s.cap.Capture(ctx, url, theme)
 	if err != nil {
 		c.err = err
 		return nil, err
@@ -271,19 +282,19 @@ func (s *Store) Missing(keys []string) []string {
 	return out
 }
 
-// EnsureMissing 在后台串行补齐缺失的缩略图（key → 采集 URL）。
+// EnsureMissing 在后台串行补齐缺失的缩略图。
 // 立即返回排队数；生成走既有的全局并发 1 与单飞，不会阻塞 /api/index。
-func (s *Store) EnsureMissing(items map[string]string) int {
-	if s == nil || s.dir == "" || len(items) == 0 {
+func (s *Store) EnsureMissing(jobs []Job) int {
+	if s == nil || s.dir == "" || len(jobs) == 0 {
 		return 0
 	}
-	todo := make([]string, 0, len(items))
-	for k := range items {
-		if !safeKey(k) {
+	todo := make([]Job, 0, len(jobs))
+	for _, j := range jobs {
+		if !safeKey(j.Key) {
 			continue
 		}
-		if _, ok := readValid(filepath.Join(s.dir, k+".png")); !ok {
-			todo = append(todo, k)
+		if _, ok := readValid(filepath.Join(s.dir, j.Key+".png")); !ok {
+			todo = append(todo, j)
 		}
 	}
 	if len(todo) == 0 {
@@ -291,9 +302,9 @@ func (s *Store) EnsureMissing(items map[string]string) int {
 	}
 	s.log.Printf("缩略图补生成排队 %d 件", len(todo))
 	go func() {
-		for _, k := range todo {
-			if _, err := s.GetOrCreate(context.Background(), k, items[k]); err != nil {
-				s.log.Printf("缩略图补生成失败 %s: %v", k, err)
+		for _, j := range todo {
+			if _, err := s.GetOrCreate(context.Background(), j.Key, j.URL, j.Theme); err != nil {
+				s.log.Printf("缩略图补生成失败 %s: %v", j.Key, err)
 			}
 		}
 		s.log.Printf("缩略图补生成完成 %d 件", len(todo))

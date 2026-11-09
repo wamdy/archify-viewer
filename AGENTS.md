@@ -112,6 +112,9 @@ archify-viewer/
   随 `Rescan` 清理陈旧项。写盘只发生在 `internal/thumbs`（`internal/web` 自身仍无写调用）。
   采集用系统 Chrome/Edge **无头进程** + 一次性 profile（不自写 WebView2 COM）；
   无浏览器 ⇒ 404 `thumb_unavailable`，前端保持类型占位，不伪装成功。
+  **按主题出两张**：缓存键追加 `-light` / `-dark`，`GET /t/{id}?theme=dark` 取深色那张，
+  查看器切主题即换一套。深色采集用 `--force-dark-mode` 且**不能同时带 `--virtual-time-budget`**
+  （实测会出图但不退出进程），改用 `--timeout=4000` 收口。
 - **手工标签**：键 `type/slug`（跨交付稳定，重新交付自动继承）；存 `%AppData%/archify-viewer/tags.yaml`，
   原子写 + 0600；`POST /api/tags` 幂等整体替换，`/api/index` 每件附 `tags`；`Rescan` 时清理孤儿键。
   路径式层级（`a/b/c`，最多 4 层）；过滤在搜索栏（多选取交集），树是分组导航。

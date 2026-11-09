@@ -65,7 +65,7 @@ func TestPickBrowser(t *testing.T) {
 }
 
 func TestCaptureArgsContract(t *testing.T) {
-	args := strings.Join(captureArgs("P", "S", "http://127.0.0.1:1/a/x"), " ")
+	args := strings.Join(captureArgs("P", "S", "http://127.0.0.1:1/a/x", "light"), " ")
 	for _, want := range []string{
 		"--headless=new", "--window-size=1280,800", "--virtual-time-budget=2000",
 		"--user-data-dir=P", "--screenshot=S", "http://127.0.0.1:1/a/x",
@@ -77,10 +77,22 @@ func TestCaptureArgsContract(t *testing.T) {
 	}
 }
 
+func TestCaptureArgsDarkUsesForceDarkAndTimeout(t *testing.T) {
+	args := strings.Join(captureArgs("P", "S", "http://127.0.0.1:1/a/x", "dark"), " ")
+	for _, want := range []string{"--force-dark-mode", "--timeout=4000"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("深色参数缺 %q：%s", want, args)
+		}
+	}
+	if strings.Contains(args, "--virtual-time-budget") {
+		t.Errorf("深色不应同时带虚拟时间预算（会挂住进程）：%s", args)
+	}
+}
+
 func TestCaptureWithHelperBrowser(t *testing.T) {
 	t.Setenv(helperEnv, "ok")
 	c := &BrowserCapturer{bin: os.Args[0], timeout: 10 * time.Second}
-	png, err := c.Capture(context.Background(), "http://127.0.0.1:1/a/x")
+	png, err := c.Capture(context.Background(), "http://127.0.0.1:1/a/x", "light")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +104,7 @@ func TestCaptureWithHelperBrowser(t *testing.T) {
 func TestCaptureHelperFailureCarriesStderr(t *testing.T) {
 	t.Setenv(helperEnv, "fail")
 	c := &BrowserCapturer{bin: os.Args[0], timeout: 10 * time.Second}
-	_, err := c.Capture(context.Background(), "http://127.0.0.1:1/a/x")
+	_, err := c.Capture(context.Background(), "http://127.0.0.1:1/a/x", "light")
 	if !errors.Is(err, ErrFailed) {
 		t.Fatalf("err = %v, want ErrFailed", err)
 	}
@@ -104,7 +116,7 @@ func TestCaptureHelperFailureCarriesStderr(t *testing.T) {
 func TestCaptureUnavailableWhenNoBrowser(t *testing.T) {
 	// 显式指定一个不存在的路径：pickBrowser 按约定不回落 → 判不可用。
 	t.Setenv("ARCHIFY_VIEWER_BROWSER", "/definitely/not/a/browser")
-	if _, err := NewBrowserCapturer().Capture(context.Background(), "http://127.0.0.1:1/a/x"); !errors.Is(err, ErrUnavailable) {
+	if _, err := NewBrowserCapturer().Capture(context.Background(), "http://127.0.0.1:1/a/x", "light"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("err = %v, want ErrUnavailable", err)
 	}
 }
