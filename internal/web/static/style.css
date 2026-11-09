@@ -24,6 +24,7 @@
   --radius: 10px;
   --radius-lg: 15px;
   --gap: 14px;
+  --status-h: 24px;
   --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --sk-base: color-mix(in srgb, var(--text-dim) 16%, var(--surface));
   --sk-hi: color-mix(in srgb, var(--text-dim) 6%, var(--surface));
@@ -62,11 +63,19 @@
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-html { min-height: 100%; }
+/* ---------- 应用外壳 ----------
+   文档本身不滚动：滚动只发生在三个视图容器内部。这样顶栏与底部状态栏在任何窗口
+   尺寸下都贴住画面上下边缘（旧姿势下页脚是普通流元素，查看视图的 64vh 舞台一旦把
+   文档顶过视口高度，页脚整条掉到折叠线以下 —— 960×600 实测 foot.top=614 > 600）。
+   范式对齐同族工具 ssh-tunnel-ui 的 body/.shell/.statusbar 三件套。 */
+
+html, body { height: 100%; }
 
 body {
   margin: 0;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background-color: var(--bg);
   background-image:
     radial-gradient(900px 520px at 10% -12%, var(--bg-glow-1), transparent 70%),
@@ -82,6 +91,16 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
+/* 三视图各自是滚动容器：hidden 的那个被全局 [hidden] 规则移出布局，同一时刻只有一个在滚。
+   min-height:0 是必需的 —— flex 子项默认 min-height:auto 会让内容把容器顶高、滚动条失效。 */
+
+#view-list, #view-viewer, #view-settings {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* ---------- 顶栏 ---------- */
 
 .topbar {
@@ -95,9 +114,8 @@ body {
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
   box-shadow: var(--shadow-sm);
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  /* 外壳内文档不滚动，sticky 已惰性；定高停靠由 flex 保证（旧 sticky 依赖文档滚动才生效）。 */
+  flex-shrink: 0;
 }
 
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -318,7 +336,7 @@ body {
 
 /* ---------- 状态横幅与空态 ---------- */
 
-.global-banners { display: block; }
+.global-banners { display: block; flex-shrink: 0; }
 .banner {
   margin: 12px 24px 0;
   padding: 10px 13px;
@@ -359,6 +377,7 @@ body {
   align-items: center;
   gap: 12px 16px;
   padding: 12px 24px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 70%, transparent);
   backdrop-filter: blur(12px);
@@ -370,7 +389,11 @@ body {
 
 .viewer-stage {
   position: relative;
-  min-height: 64vh;
+  /* 填满「查看条」与「状态栏」之间的剩余高度。旧值 min-height:64vh 是固定比例，
+     窗口一矮就把状态栏整条顶出画面；320px 下限保证极矮时改为容器内滚动，
+     而不是把产物压成不可用的高度。 */
+  flex: 1 1 auto;
+  min-height: 320px;
   margin: 18px 24px 26px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -522,7 +545,8 @@ body {
 .toast {
   position: fixed;
   right: 20px;
-  bottom: 20px;
+  /* 让开停靠的状态栏，避免提示压住它（ssh-tunnel-ui 同口径）。 */
+  bottom: calc(var(--status-h) + 14px);
   z-index: 10;
   max-width: min(420px, calc(100vw - 40px));
   padding: 11px 15px;
@@ -543,29 +567,40 @@ body {
 .toast-info { border-left-color: var(--accent); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-.foot {
+/* 状态栏：定高、不参与滚动、永不被裁。
+   旧 `.foot` 是普通流元素（position:static）且 flex-wrap:wrap，缩放窗口后整条掉到
+   折叠线以下；这里改为外壳的最后一个 flex 子项，flex-shrink:0 + 固定高度停靠。 */
+
+.statusbar {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 24px;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  height: var(--status-h);
+  padding: 0 14px;
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  background: var(--surface);
   color: var(--text-faint);
   font-size: 11px;
-  flex-wrap: wrap;
+  white-space: nowrap;
 }
-.foot-right { display: inline-flex; gap: 14px; flex-wrap: wrap; }
+
+.status-item { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.status-sep { width: 1px; height: 12px; flex-shrink: 0; background: var(--border); }
+.spacer { flex: 1 1 auto; min-width: 0; }
 .tray-hint { color: var(--text-dim); }
 
 @media (max-width: 780px) {
   .grid, .settings-grid { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
   .brand-sub { display: none; }
+  /* 状态栏定高不换行，窄屏先舍弃快捷键提示，保住「生成时间 / 托盘行为」两条实际状态。 */
+  .status-kbd { display: none; }
 }
 
 @media (max-width: 640px) {
-  .topbar, .controls, .grid, .foot, .viewer-bar, .settings-view { padding-left: 14px; padding-right: 14px; }
-  .viewer-stage { margin-left: 14px; margin-right: 14px; min-height: 52vh; }
+  .topbar, .controls, .grid, .viewer-bar, .settings-view { padding-left: 14px; padding-right: 14px; }
+  .viewer-stage { margin-left: 14px; margin-right: 14px; min-height: 260px; }
   .banner { margin-left: 14px; margin-right: 14px; }
   .stats { margin-left: 0; }
 }

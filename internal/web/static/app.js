@@ -695,9 +695,24 @@ async function loadViewer(art) {
   }, TIMEOUT_MS);
 }
 
+/* ---------- 视图滚动：外壳化后文档不滚动，滚动容器是视图本身 ----------
+   body 改为 overflow:hidden 的应用外壳（对齐 ssh-tunnel-ui），window.scrollY 恒为 0、
+   window.scrollTo 变成空操作。列表阅读位置的保存/恢复是既有功能，必须改打在容器上，
+   否则会**静默失效**：不报错，只是每次都回到顶部。 */
+
+function saveListScroll() {
+  const box = el("view-list");
+  state.listScroll = box && box.scrollTop ? box.scrollTop : 0;
+}
+
+function resetScroll(id) {
+  const box = el(id);
+  if (box) box.scrollTop = 0;
+}
+
 function showViewer(id) {
   const changed = state.view !== "viewer" || state.activeId !== id;
-  if (state.view !== "viewer") state.listScroll = window.scrollY || 0;
+  if (state.view !== "viewer") saveListScroll();
   state.view = "viewer";
   state.activeId = id;
   if (changed) { state.loadedId = ""; state.frameReady = false; }
@@ -706,7 +721,7 @@ function showViewer(id) {
   el("view-viewer").hidden = false;
   renderViewerMeta();
   ensureViewerLoaded();
-  if (window.scrollTo) window.scrollTo(0, 0);
+  resetScroll("view-viewer");
   if (changed && el("btn-back").focus) el("btn-back").focus();
 }
 
@@ -744,7 +759,7 @@ function showList() {
   el("view-list").hidden = false;
   if (wasOther) {
     const y = state.listScroll || 0;
-    const restore = () => { if (window.scrollTo) window.scrollTo(0, y); };
+    const restore = () => { const box = el("view-list"); if (box) box.scrollTop = y; };
     if (window.requestAnimationFrame) window.requestAnimationFrame(restore);
     else restore();
     restoreFocus();
@@ -752,12 +767,12 @@ function showList() {
 }
 
 function showSettings() {
-  if (state.view !== "settings") state.listScroll = window.scrollY || 0;
+  if (state.view !== "settings") saveListScroll();
   state.view = "settings";
   resetViewer();
   el("view-list").hidden = true;
   el("view-settings").hidden = false;
-  if (window.scrollTo) window.scrollTo(0, 0);
+  resetScroll("view-settings");
   loadSettings(false);
   if (el("btn-settings-back").focus) el("btn-settings-back").focus();
 }

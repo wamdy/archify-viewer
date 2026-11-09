@@ -194,9 +194,15 @@ archify-view gui  --root D:/design/.archify --root C:/Users/wamdy/项目/appollo
   </div>
 </section>
 
-<footer class="foot">
-  <span>只读浏览 · 不渲染、不校验、不改写产物 · 仅回环监听 · 按 <kbd class="kbd">/</kbd> 搜索 · <kbd class="kbd">,</kbd> 设置</span>
-  <span class="foot-right"><span id="tray-hint" class="tray-hint"></span><span id="generated"></span></span>
+<!-- 状态栏：外壳最后一个 flex 子项，定高停靠，任何窗口尺寸下都可见。
+     完整职责声明收进 title（定高不换行，长句会挤掉真正的状态）；id 沿用 tray-hint / generated，app.js 无需改写入面。 -->
+<footer class="statusbar" aria-label="状态栏">
+  <span class="status-item" title="只读浏览 · 不渲染、不校验、不改写产物 · 仅回环监听">只读浏览 · 不改写产物</span>
+  <span class="status-sep" aria-hidden="true"></span>
+  <span class="status-item" id="generated"></span>
+  <span class="status-item tray-hint" id="tray-hint" title="关闭窗口后的行为，可在设置里改"></span>
+  <span class="spacer"></span>
+  <span class="status-item status-kbd">按 <kbd class="kbd">/</kbd> 搜索 · <kbd class="kbd">,</kbd> 设置</span>
 </footer>
 
 <!-- 轻量全局提示：无遮罩、不抢焦点、自动消失，不是弹窗。 -->
