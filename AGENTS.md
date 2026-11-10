@@ -119,7 +119,10 @@ archify-viewer/
   （实测会出图但不退出进程），改用 `--timeout=4000` 收口。
 - **手工标签**：键 `type/slug`（跨交付稳定，重新交付自动继承）；存 `%AppData%/archify-viewer/tags.yaml`，
   原子写 + 0600；`POST /api/tags` 幂等整体替换，`/api/index` 每件附 `tags`；`Rescan` 时清理孤儿键。
-  路径式层级（`a/b/c`，最多 4 层）；过滤在搜索栏（多选取交集），树是分组导航。
+  路径式层级（`a/b/c`，最多 4 层）；过滤在搜索栏与左侧树（标签/来源/类型多选取**并集**，同键内按前缀匹配子树）。
+  **父子语义 = 逻辑包含**：挂 `a/b` 即隐含 `a`，但物理上只存最具体标签——`Normalize` 保存时做段级前缀剪枝
+  （`a` 不吞 `ab`），载入旧文件时同样剪枝并回写自愈；树里父节点补列「未被展开的子级」产物，
+  子级展开后产物归位、不重复；打标候选树只把真实存在的标签渲染成可点按钮，纯分组节点不可点。
 - 超时：`ReadHeaderTimeout=5s`、`WriteTimeout=60s`、`IdleTimeout=30s`。
 - **设置写面**：`GET /api/settings`、`POST /api/settings/roots`、`POST /api/settings/close-action`
   只在 `gui` / `run` 装配，未装配返回 503（能力缺失不伪装成功）。请求体限 1 MiB；

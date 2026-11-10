@@ -17,7 +17,8 @@ func TestNormalizeDropsInvalidAndDedupes(t *testing.T) {
 		strings.Repeat("x", 61), // 超过 MaxLen
 		"a\x01b",                // 控制字符
 	})
-	want := []string{"a", "a/b", "b", "架构/平台"}
+	// a 被 a/b 覆盖，按「父级由子级隐含」剪掉
+	want := []string{"a/b", "b", "架构/平台"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("Normalize = %v, want %v", got, want)
 	}
@@ -166,5 +167,44 @@ func TestKeyStableAcrossDeliveries(t *testing.T) {
 	b := Key(" architecture ", " appollo-repo ")
 	if a != b || a != "architecture/appollo-repo" {
 		t.Fatalf("Key = %q vs %q", a, b)
+	}
+}
+
+func TestNormalizePrunesCoveredAncestors(t *testing.T) {
+	cases := []struct{ in, want []string }{
+		{[]string{"taga", "taga/subtagb"}, []string{"taga/subtagb"}},
+		{[]string{"a", "a/b", "a/b/c"}, []string{"a/b/c"}},
+		{[]string{"a", "ab"}, []string{"a", "ab"}},       // 段级判断，a 不吞 ab
+		{[]string{"a/b", "a/c"}, []string{"a/b", "a/c"}}, // 兄弟并存
+		{[]string{"taga", "taga/subtagb", "other"}, []string{"other", "taga/subtagb"}},
+	}
+	for _, c := range cases {
+		got := Normalize(c.in)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("Normalize(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestNewStoreHealsRedundantAncestors(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tags.yaml")
+	raw := "version: 1\nartifacts:\n  workflow/x:\n    - taga\n    - taga/subtagb\n"
+	if err := os.WriteFile(p, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Get("workflow/x"); len(got) != 1 || got[0] != "taga/subtagb" {
+		t.Fatalf("载入未剪枝: %v", got)
+	}
+	// 回写后文件里也不再有父级
+	reload, err := NewStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reload.Get("workflow/x"); len(got) != 1 || got[0] != "taga/subtagb" {
+		t.Fatalf("回写未生效: %v", got)
 	}
 }

@@ -57,11 +57,23 @@ func NewStore(path string) (*Store, error) {
 	if err := yaml.Unmarshal(raw, &f); err != nil {
 		return nil, fmt.Errorf("tags.yaml 解析失败: %w", err)
 	}
+	changed := false
 	for k, v := range f.Artifacts {
 		if !validKey(k) {
+			changed = true
 			continue
 		}
-		s.data[k] = Normalize(v)
+		next := Normalize(v)
+		if len(next) != len(v) {
+			changed = true
+		}
+		s.data[k] = next
+	}
+	if changed {
+		// 旧文件里的冗余父级/非法键在载入时清掉并回写，避免下次保存再把脏数据带出去。
+		if err := s.saveLocked(); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -206,6 +218,28 @@ func Normalize(in []string) []string {
 		}
 	}
 	sort.Strings(out)
+	return pruneAncestors(out)
+}
+
+// pruneAncestors 去掉被更具体标签覆盖的祖先：a 与 a/b 同时存在时只留 a/b。
+// 按段判断（a 不该吞掉 ab）；多级递归由逐条覆盖判定自然处理（a,a/b,a/b/c → a/b/c）。
+func pruneAncestors(list []string) []string {
+	if len(list) < 2 {
+		return list
+	}
+	out := make([]string, 0, len(list))
+	for i, t := range list {
+		covered := false
+		for j, other := range list {
+			if i != j && strings.HasPrefix(other, t+"/") {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, t)
+		}
+	}
 	return out
 }
 

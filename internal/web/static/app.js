@@ -988,11 +988,13 @@ function renderTagDraft(cardNode, a) {
     sug.className = "tag-suggest";
     box.insertBefore(sug, box.querySelector(".tag-input"));
   }
-  const pool = allTagPaths(state.index);
+  const allPaths = allTagPaths(state.index);
+  const pool = allPaths.filter((t) => !allPaths.some((o) => o !== t && o.indexOf(t + "/") === 0));
   if (!pool.length) {
     sug.innerHTML = "";
     return;
   }
+  const poolSet = new Set(pool);
   const root = { children: new Map() };
   pool.forEach((path) => {
     const segs = path.split("/");
@@ -1018,8 +1020,10 @@ function renderTagDraft(cardNode, a) {
         '<span class="tag-sugg-caret' + (hasKids ? "" : " is-empty") + '"' +
         (hasKids ? ' data-action="sugg-expand" data-path="' + esc(child.path) + '"' : "") + ">" +
         (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
-        '<button class="tag-sugg-name" data-action="sugg-add" data-id="' + esc(a.id) + '" data-tag="' + esc(child.path) + '"' +
-        ' title="' + (applied ? "已在该卡片上" : "挂上该标签") + '">' + esc(child.name) + "</button>" +
+        (poolSet.has(child.path)
+          ? '<button class="tag-sugg-name" data-action="sugg-add" data-id="' + esc(a.id) + '" data-tag="' + esc(child.path) + '"' +
+            ' title="' + (applied ? "已在该卡片上" : "挂上该标签") + '">' + esc(child.name) + "</button>"
+          : '<span class="tag-sugg-group" title="分组（仅用于组织子标签）">' + esc(child.name) + "</span>") +
         (applied ? '<span class="tag-sugg-flag">已加</span>' : "") + "</div>" +
         (hasKids && open ? renderSug(child, depth + 1) : "");
     }).join("");
@@ -1033,9 +1037,11 @@ async function saveTags(a, next) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: a.type, slug: a.slug, tags: next }),
     });
-    a.tags = (j && j.tags) || [];
+    const saved = (j && j.tags) || [];
+    const pruned = Array.isArray(next) && saved.length < next.length;
+    a.tags = saved;
     syncAfterTags(a);
-    toast("标签已保存", "ok");
+    toast(pruned ? "已保存；父级标签由子级隐含，已自动去掉" : "标签已保存", "ok");
   } catch (err) {
     toast("标签保存失败：" + (err && err.message ? err.message : "网络错误"), "err");
   }
@@ -1106,6 +1112,24 @@ function renderTree(idx) {
     ' title="' + esc(a.title || a.slug || "") + '" style="padding-left:' + (18 + depth * 12) + 'px">' +
     '<span class="t-leaf-name">' + esc(label || a.title || a.slug || a.id) + "</span></div>";
   const leafRows = (list, depth) => (list || []).map((a) => leafRow(a, depth)).join("");
+  // 父节点补列：精确命中本节点，或标签在子树下但那个更深节点当前未展开
+  // （父子都展开时同一产物只在更深节点出现，不重复）。
+  const leavesForNode = (path) => {
+    const seen = new Set();
+    const out = [];
+    arts.forEach((a) => {
+      const hit = (a.tags || []).some((t) => {
+        if (t === path) return true;
+        if (t.indexOf(path + "/") !== 0) return false;
+        return !state.treeExpanded[t];
+      });
+      if (hit && !seen.has(a.id)) {
+        seen.add(a.id);
+        out.push(a);
+      }
+    });
+    return out;
+  };
 
   const root = { children: new Map() };
   counts.forEach((_, path) => {
@@ -1139,7 +1163,7 @@ function renderTree(idx) {
         '<span class="t-count">' + (counts.get(child.path) || 0) + "</span></div>";
       if (open) {
         if (child.children.size > 0) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
-        out += leafRows(leavesByPath.get(child.path), depth + 1);
+        out += leafRows(leavesForNode(child.path), depth + 1);
       }
       return out;
     }).join("");
