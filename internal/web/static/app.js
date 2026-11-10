@@ -1035,6 +1035,25 @@ function renderTree(idx) {
     });
   });
 
+  // 叶子索引：标签精确路径、类型、来源各自挂哪些卡片
+  const leavesByPath = new Map();
+  const leavesByType = new Map();
+  const leavesByRoot = new Map();
+  const pushLeaf = (m, k, a) => {
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(a);
+  };
+  arts.forEach((a) => {
+    (a.tags || []).forEach((t) => pushLeaf(leavesByPath, t, a));
+    pushLeaf(leavesByType, a.type, a);
+    if (a.root) pushLeaf(leavesByRoot, a.root, a);
+  });
+  const leafRow = (a, depth, label) =>
+    '<div class="tree-leaf" data-action="tree-open" data-id="' + esc(a.id) + '"' +
+    ' title="' + esc(a.title || a.slug || "") + '" style="padding-left:' + (18 + depth * 12) + 'px">' +
+    '<span class="t-leaf-name">' + esc(label || a.title || a.slug || a.id) + "</span></div>";
+  const leafRows = (list, depth) => (list || []).map((a) => leafRow(a, depth)).join("");
+
   const root = { children: new Map() };
   counts.forEach((_, path) => {
     const segs = path.split("/");
@@ -1052,7 +1071,7 @@ function renderTree(idx) {
     const keys = [...node.children.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
     return keys.map((k) => {
       const child = node.children.get(k);
-      const hasKids = child.children.size > 0;
+      const hasKids = child.children.size > 0 || (leavesByPath.get(child.path) || []).length > 0;
       const open = !!state.treeExpanded[child.path];
       const active = state.tagSel.indexOf(child.path) >= 0;
       let out = '<div class="tree-node' + (active ? " is-active" : "") + '" data-action="tree-filter" data-path="' + esc(child.path) + '"' +
@@ -1065,7 +1084,10 @@ function renderTree(idx) {
         (active ? " checked" : "") + ' aria-label="按 ' + esc(child.path) + ' 筛选">' +
         '<span class="t-name">' + esc(child.name) + "</span>" +
         '<span class="t-count">' + (counts.get(child.path) || 0) + "</span></div>";
-      if (hasKids && open) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
+      if (open) {
+        if (child.children.size > 0) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
+        out += leafRows(leavesByPath.get(child.path), depth + 1);
+      }
       return out;
     }).join("");
   };
@@ -1085,10 +1107,14 @@ function renderTree(idx) {
   sys.push('<div class="tree-node" data-action="tree-types" style="padding-left:6px"><span class="t-caret">' +
     (typesOpen ? "▾" : "▸") + '</span><span class="t-name">按类型</span><span class="t-count">' + typeKeys.length + "</span></div>");
   if (typesOpen) {
-    sys.push('<div class="tree-children">' + typeKeys.map((t) =>
-      '<div class="tree-node' + (state.type === t ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
-      '<span class="t-caret"></span><span class="t-name">' + esc(t) + '</span><span class="t-count">' + types.get(t) + "</span></div>"
-    ).join("") + "</div>");
+    sys.push('<div class="tree-children">' + typeKeys.map((t) => {
+      const key = "type:" + t;
+      const open = !!state.treeExpanded[key];
+      return '<div class="tree-node' + (state.type === t ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
+        '<span class="t-caret" data-action="tree-expand" data-path="' + esc(key) + '">' + (open ? "▾" : "▸") + "</span>" +
+        '<span class="t-name">' + esc(t) + '</span><span class="t-count">' + types.get(t) + "</span></div>" +
+        (open ? leafRows(leavesByType.get(t), 2) : "");
+    }).join("") + "</div>");
   }
 
   const rootNames = [...new Set(arts.map((a) => a.root).filter(Boolean))].sort((x, y) => x.localeCompare(y, "zh-CN"));
@@ -1097,11 +1123,13 @@ function renderTree(idx) {
     rootNames.forEach((r) => {
       const n = arts.filter((a) => a.root === r).length;
       const on = state.roots.indexOf(r) >= 0;
+      const rKey = "root:" + r;
+      const rOpen = !!state.treeExpanded[rKey];
       sys.push('<div class="tree-node' + (on ? " is-active" : "") + '" data-action="tree-root" data-root="' + esc(r) +
-        '" style="padding-left:6px"><span class="t-caret"></span>' +
+        '" style="padding-left:6px"><span class="t-caret" data-action="tree-expand" data-path="' + esc(rKey) + '">' + (rOpen ? "▾" : "▸") + "</span>" +
         '<input type="checkbox" class="t-check" data-action="tree-root" data-root="' + esc(r) + '"' + (on ? " checked" : "") +
         ' aria-label="按来源 ' + esc(r) + ' 筛选"><span class="t-name">' + esc(r) + '</span>' +
-        '<span class="t-count">' + n + "</span></div>");
+        '<span class="t-count">' + n + "</span></div>" + (rOpen ? leafRows(leavesByRoot.get(r), 1) : ""));
     });
   }
 
@@ -1345,6 +1373,10 @@ function onTreeClick(e) {
   if (act === "tree-type") {
     state.type = state.type === t.dataset.type ? "" : t.dataset.type;
     render();
+    return;
+  }
+  if (act === "tree-open") {
+    if (t.dataset.id) openViewer(t.dataset.id);
     return;
   }
   if (act === "tree-root") {

@@ -707,6 +707,18 @@ body {
 .tree-node .t-count { font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .tree-children { margin-left: 12px; padding-left: 4px; border-left: 1px dashed var(--border); }
 .tree-empty { padding: 6px 8px; font-size: 11px; color: var(--text-faint); }
+.tree-leaf {
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-leaf:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.t-leaf-name { display: block; overflow: hidden; text-overflow: ellipsis; }
 
 .tag-filter { position: relative; }
 .tag-filter-panel {
