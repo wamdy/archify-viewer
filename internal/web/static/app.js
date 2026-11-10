@@ -1045,10 +1045,13 @@ function renderTree(idx) {
     types.set(a.type, (types.get(a.type) || 0) + 1);
     const ts = a.tags || [];
     if (!ts.length) uncat++;
+    const seen = new Set(); // 同一产物内按前缀去重：taga + taga/subtagb 只给 taga 记一次
     ts.forEach((t) => {
       const segs = t.split("/");
       for (let i = 1; i <= segs.length; i++) {
         const p = segs.slice(0, i).join("/");
+        if (seen.has(p)) continue;
+        seen.add(p);
         counts.set(p, (counts.get(p) || 0) + 1); // 每个前缀都计入 = 子树计数
       }
     });
@@ -1179,10 +1182,13 @@ function renderTagFilter(idx) {
   // 树形多选：按 `/` 分层，父节点勾选即覆盖整棵子树；展开状态独立于左栏树。
   const counts = new Map();
   ((idx && idx.artifacts) || []).forEach((a) => {
+    const seen = new Set();
     (a.tags || []).forEach((t) => {
       const segs = t.split("/");
       for (let i = 1; i <= segs.length; i++) {
         const pre = segs.slice(0, i).join("/");
+        if (seen.has(pre)) continue;
+        seen.add(pre);
         counts.set(pre, (counts.get(pre) || 0) + 1);
       }
     });
