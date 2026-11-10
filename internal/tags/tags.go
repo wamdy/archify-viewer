@@ -283,7 +283,20 @@ func (s *Store) writeDisk(data map[string][]string) error {
 	if err := os.Chmod(name, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(name, s.path)
+	// Windows：目标 tags.yaml 只要还有一个「非 share-delete」的读句柄在（另一实例正
+	// NewStore/读盘——Go os.ReadFile 默认不带 FILE_SHARE_DELETE；或杀软瞬时打开），
+	// rename 覆盖即报 access denied。这类句柄微秒级释放，做有界重试；POSIX 对打开中的
+	// 目标 rename 本就成功，不会走进本分支。重试全程持文件锁，上限 1s << 拿锁超时 5s。
+	for attempt := 0; ; attempt++ {
+		err := os.Rename(name, s.path)
+		if err == nil {
+			return nil
+		}
+		if !isShareViolation(err) || attempt >= 50 {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // Normalize 清洗标签列表：去空白、去空段、去重、排序、截断超限项。

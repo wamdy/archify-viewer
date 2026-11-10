@@ -29,3 +29,9 @@ func tryLockFile(f *os.File) (bool, error) {
 func unlockFile(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
+
+// isShareViolation 在 POSIX 上理论上不会被原子写触发（rename 覆盖打开中的目标本就成功），
+// 仅为口径统一保留：EACCES/EBUSY 视为可重试的瞬时占用。
+func isShareViolation(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EBUSY)
+}

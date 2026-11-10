@@ -33,3 +33,9 @@ func unlockFile(f *os.File) {
 	var ov windows.Overlapped
 	_ = windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &ov)
 }
+
+// isShareViolation 识别 Windows 上「目标仍被非 share-delete 句柄打开」的 rename 失败：
+// ERROR_ACCESS_DENIED(5)/ERROR_SHARING_VIOLATION(32)。写侧据此做有界重试（句柄微秒级释放）。
+func isShareViolation(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
+}
