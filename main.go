@@ -261,11 +261,14 @@ func guiCmd(args []string) {
 		return
 	}
 
+	// 先假定浏览器形态；原生窗口建成功后再改回 native。
+	srv.SetClientMode("browser")
 	if !lf.noBrowser && desktop.Available() == nil {
 		// WebView2 要求窗口在主操作系统线程上创建与运行。
 		runtime.LockOSThread()
 		win, werr := newNativeWindow("Archify 产物库", url, cfg.GUI.Width, cfg.GUI.Height)
 		if werr == nil {
+			srv.SetClientMode("native")
 			// 关闭行为每次 WM_CLOSE 都重新读配置，设置页修改后无需重启。
 			// 托盘「退出」必须经 win.Close() → Dispatch(Terminate) 回到 UI 线程，不能直接 Quit。
 			if terr := win.EnableTray(desktop.TrayOptions{
@@ -314,6 +317,7 @@ func runCmd(args []string) {
 	if err := srv.Start(); err != nil {
 		reportFatal(err)
 	}
+	srv.SetClientMode("browser")
 	log.Printf("服务已启动: %s", srv.URL())
 	waitInterrupt()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

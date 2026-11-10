@@ -41,6 +41,7 @@ const state = {
   treeExpanded: {},  // 左栏树展开状态
   tagPanelExpanded: {}, // 搜索栏标签筛选项的展开状态
   treeCollapsed: false,
+  clientMode: "native",
   thumbBust: 0,      // 手动重建/重扫后给缩略图 URL 加版本，绕过浏览器内存缓存
   autoCleared: [], // 索引刷新时自动失效的筛选条件，合并进同一次提示，避免被后续提示吞掉
   settings: null,
@@ -615,6 +616,9 @@ function render() {
     return;
   }
 
+  state.clientMode = idx.client_mode || "native";
+  const openBtn = el("btn-open-app-browser");
+  if (openBtn) openBtn.hidden = state.clientMode === "browser";
   syncFilters(idx);
   const arts = idx.artifacts || [];
   const visible = sorted(arts.filter(match));

@@ -61,6 +61,10 @@ type Server struct {
 	// openBrowser 把回环 URL 交给系统浏览器；nil 表示未装配。
 	openBrowser BrowserOpener
 
+	// clientMode 是启动形态："native"（WebView2 原生窗口）或 "browser"（run / 回退浏览器）。
+	// 前端据此隐藏「在浏览器打开」（已经是浏览器就没必要再开一个）。
+	clientMode string
+
 	// tags 是手工标签存储；nil 表示未装配（/api/tags 返回 503，索引不带 tags）。
 	tags *tags.Store
 
@@ -96,6 +100,17 @@ func New(cfg *config.Config, idx *index.Index, store *index.Store, opts ...Optio
 
 // 静态资产白名单：只这四份，其余路径一律 404（不提供服务目录列举）。
 var assetNames = []string{"index.html", "app.js", "style.css", "favicon.svg"}
+
+// SetClientMode 由 main 在启动形态确定后调用（gui 原生窗口成功 / 回退浏览器 / run）。
+func (s *Server) SetClientMode(mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode == "browser" {
+		s.clientMode = "browser"
+	} else {
+		s.clientMode = "native"
+	}
+}
 
 func (s *Server) router() http.Handler {
 	mux := http.NewServeMux()

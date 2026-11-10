@@ -72,10 +72,16 @@ func findByTypeSlug(st *index.Store, typ, slug string) *index.Artifact {
 // indexView 在索引快照上叠加标签（键 = type/slug），不改 index 包的数据结构。
 func (s *Server) indexView() any {
 	s.mu.RLock()
-	idx, st := s.idx, s.tags
+	idx, st, mode := s.idx, s.tags, s.clientMode
 	s.mu.RUnlock()
+	if mode == "" {
+		mode = "native"
+	}
 	if st == nil || idx == nil || len(idx.Artifacts) == 0 {
-		return idx
+		return struct {
+			*index.Index
+			ClientMode string `json:"client_mode"`
+		}{Index: idx, ClientMode: mode}
 	}
 	snap := st.Snapshot()
 	type artifactView struct {
@@ -84,8 +90,9 @@ func (s *Server) indexView() any {
 	}
 	out := struct {
 		*index.Index
-		Artifacts []artifactView `json:"artifacts"`
-	}{Index: idx, Artifacts: make([]artifactView, 0, len(idx.Artifacts))}
+		Artifacts  []artifactView `json:"artifacts"`
+		ClientMode string         `json:"client_mode"`
+	}{Index: idx, Artifacts: make([]artifactView, 0, len(idx.Artifacts)), ClientMode: mode}
 	for _, a := range idx.Artifacts {
 		v := artifactView{Artifact: a}
 		if t := snap[tags.Key(a.Type, a.Slug)]; len(t) > 0 {
