@@ -128,6 +128,8 @@ archify-viewer/
   只在 `gui` / `run` 装配，未装配返回 503（能力缺失不伪装成功）。请求体限 1 MiB；
   保存用 `CreateTemp` + `Sync` + `Rename` + `Chmod(0600)`，**先落盘再改运行态**，
   成功后 `srv.Rescan()` 立即重建索引。路径只作为字符串校验「目录存在」，不新增任何按路径取文件的能力。
+  「选择目录…」只回填输入框（选择 ≠ 添加），需再点「添加目录」才落盘；行内「移除」按钮的 disabled
+  由 `setSettingsBusy` 统一收发——`renderSettings` 可能在 busy=true 时重绘，结束时必须复活，否则永久点不动。
 - **Windows 资源与子系统**：`-H windowsgui` 保证双击无控制台黑窗；`console_windows.go` 让 CLI
   调用仍可打印、启动失败无控制台时弹 MessageBox（不静默退出）。`.syso` 资源 ID 是硬约定：
   `RT_MANIFEST=1`、`RT_GROUP_ICON=2`（窗口 `IconId=2` 与托盘 `LoadImageW(2)` 共用）、`RT_ICON=3..6`。

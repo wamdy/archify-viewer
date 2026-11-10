@@ -475,6 +475,11 @@ function setSettingsBusy(busy) {
     const b = el("close-" + v);
     if (b) b.disabled = busy;
   });
+  // 行内按钮在 renderSettings 时按 busy 渲染；请求结束必须显式复活，
+  // 否则「添加成功 → 本次渲染的移除按钮仍是 disabled」会永久点不动。
+  document.querySelectorAll(".root-row [data-remove]").forEach((b) => {
+    b.disabled = busy;
+  });
 }
 
 async function postSettings(url, body, okText, onSuccess) {
@@ -518,9 +523,12 @@ function pickRootFolder() {
   requestJSON("/api/settings/pick-folder", { method: "POST" })
     .then((j) => {
       if (!j || j.cancelled || !j.path) return;
+      // 选择 ≠ 添加：只回填路径让用户确认（可改名后再点「添加目录」）。
       const input = el("root-path");
-      if (input) input.value = j.path;
-      addRoot();
+      if (!input) return;
+      input.value = j.path;
+      if (input.focus) input.focus();
+      toast("已选择目录，点「添加目录」生效", "ok");
     })
     .catch((err) => toast("打开目录选择失败：" + (err && err.message ? err.message : "网络错误"), "err"));
 }
