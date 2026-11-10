@@ -1610,10 +1610,10 @@ function bind() {
   el("btn-back").addEventListener("click", backToList);
   el("btn-viewer-retry").addEventListener("click", () => { state.loadedId = ""; ensureViewerLoaded(); });
   el("btn-settings").addEventListener("click", openSettings);
-  el("btn-open-browser").addEventListener("click", () => {
-    if (!state.activeId) return;
-    requestJSON("/api/open-browser", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: state.activeId }) })
-      .then(() => toast("已交给系统浏览器打开", "ok"))
+  el("btn-open-app-browser").addEventListener("click", () => {
+    // 应用级：打开查看器首页，不针对单件产物
+    requestJSON("/api/open-browser", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(() => toast("已在系统浏览器打开查看器", "ok"))
       .catch((err) => toast("打开失败：" + (err && err.message ? err.message : "网络错误"), "err"));
   });
   el("btn-theme").addEventListener("click", cycleTheme);
