@@ -974,6 +974,19 @@ function renderTagDraft(cardNode, a) {
   list.innerHTML = tags.length
     ? tags.map((t) => '<button class="tag-chip is-on" data-action="tag-del" data-id="' + esc(a.id) + '" data-tag="' + esc(t) + '" title="删除该标签">' + esc(t) + " ×</button>").join("")
     : '<span class="tag-edit-hint">还没有标签。</span>';
+
+  // 已有标签候选：点一下即挂上，避免手敲多级路径
+  const pool = allTagPaths(state.index).filter((t) => tags.indexOf(t) < 0);
+  let sug = box.querySelector(".tag-suggest");
+  if (!sug) {
+    sug = document.createElement("div");
+    sug.className = "tag-suggest";
+    box.insertBefore(sug, box.querySelector(".tag-input"));
+  }
+  sug.innerHTML = pool.length
+    ? '<span class="tag-edit-hint">已有标签：</span>' + pool.slice(0, 40).map((t) =>
+        '<button class="tag-chip tag-sugg" data-action="tag-add" data-id="' + esc(a.id) + '" data-tag="' + esc(t) + '" title="挂上该标签">' + esc(t) + "</button>").join("")
+    : "";
 }
 
 async function saveTags(a, next) {
@@ -1251,6 +1264,10 @@ function onGridClick(e) {
   else if (t.dataset.action === "tag-filter") toggleTag(t.dataset.tag);
   else if (t.dataset.action === "tag-edit") openTagEditor(t.dataset.id, t);
   else if (t.dataset.action === "thumb-refresh") refreshThumb(t.dataset.id, t);
+  else if (t.dataset.action === "tag-add") {
+    const a = artById(t.dataset.id);
+    if (a) saveTags(a, (a.tags || []).concat([t.dataset.tag]));
+  }
   else if (t.dataset.action === "tag-del") {
     const a = artById(t.dataset.id);
     if (a) saveTags(a, (a.tags || []).filter((x) => x !== t.dataset.tag));
