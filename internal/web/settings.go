@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -18,6 +19,49 @@ type FolderPicker func(title string) (string, error)
 // WithFolderPicker 注入原生目录选择能力；未装配时端点返回 503。
 func WithFolderPicker(p FolderPicker) Option {
 	return func(s *Server) { s.pickFolder = p }
+}
+
+// BrowserOpener 由 main 注入：把回环 URL 交给系统默认浏览器。
+type BrowserOpener func(url string) error
+
+// WithBrowserOpener 注入「用浏览器打开」能力；未装配时端点 503。
+func WithBrowserOpener(fn BrowserOpener) Option {
+	return func(s *Server) { s.openBrowser = fn }
+}
+
+// handleOpenInBrowser 打开产物（带 id）或首页（不带 id）。
+func (s *Server) handleOpenInBrowser(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	opener := s.openBrowser
+	base := strings.TrimRight(s.url, "/")
+	s.mu.RUnlock()
+	if opener == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":  "browser_open_unavailable",
+			"detail": "当前形态未装配系统浏览器打开",
+		})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req)
+	target := base + "/"
+	if req.ID != "" {
+		s.mu.RLock()
+		art := findArtifact(s.store, req.ID)
+		s.mu.RUnlock()
+		if art == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown_artifact"})
+			return
+		}
+		target = base + "/a/" + art.ID
+	}
+	if err := opener(target); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "open_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"opened": target})
 }
 
 func (s *Server) handlePickFolder(w http.ResponseWriter, _ *http.Request) {

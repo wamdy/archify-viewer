@@ -58,6 +58,9 @@ type Server struct {
 	// pickFolder 是原生目录选择（main 注入）；nil 表示该形态不支持。
 	pickFolder FolderPicker
 
+	// openBrowser 把回环 URL 交给系统浏览器；nil 表示未装配。
+	openBrowser BrowserOpener
+
 	// tags 是手工标签存储；nil 表示未装配（/api/tags 返回 503，索引不带 tags）。
 	tags *tags.Store
 
@@ -106,6 +109,7 @@ func (s *Server) router() http.Handler {
 	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
 	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
 	mux.HandleFunc("POST /api/settings/pick-folder", s.handlePickFolder)
+	mux.HandleFunc("POST /api/open-browser", s.handleOpenInBrowser)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return mux
 }
