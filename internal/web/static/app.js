@@ -36,7 +36,7 @@ const state = {
   listScroll: 0,
   returnFocusId: "",
   tagSel: [],        // 搜索栏的标签过滤（多条取交集）
-  uncatOnly: false,  // 树里的「未分类」节点
+  uncatOnly: false,  // 树里的「无标签」节点（按标签判定：没有任何标签）
   visible: [],       // 当前可见序列（前后翻的依据）
   treeExpanded: {},  // 左栏树展开状态
   tagPanelExpanded: {}, // 搜索栏标签筛选项的展开状态
@@ -320,7 +320,7 @@ function filterSummary() {
   if (state.types.length) parts.push("类型 " + state.types.join(" 或 "));
   if (state.roots.length) parts.push("来源 " + state.roots.join(" 或 "));
   if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" 或 "));
-  if (state.uncatOnly) parts.push("未分类");
+  if (state.uncatOnly) parts.push("无标签");
   return parts.join(" · ") || "无条件";
 }
 
@@ -1111,11 +1111,6 @@ function renderTree(idx) {
   sys.push('<div class="tree-node' + (!state.types.length && !state.uncatOnly && !state.tagSel.length ? " is-active" : "") +
     '" data-action="tree-all" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">全部产物</span>' +
     '<span class="t-count">' + arts.length + "</span></div>");
-  sys.push('<div class="tree-node' + (state.uncatOnly ? " is-active" : "") +
-    '" data-action="tree-uncat" style="padding-left:6px"><span class="t-caret"></span>' +
-    '<input type="checkbox" class="t-check" data-action="tree-uncat"' + (state.uncatOnly ? " checked" : "") +
-    ' aria-label="只看未分类"><span class="t-name">未分类</span>' +
-    '<span class="t-count">' + uncat + "</span></div>");
 
   const typeKeys = [...types.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
   const typesOpen = !!state.treeExpanded["__types__"];
@@ -1151,9 +1146,13 @@ function renderTree(idx) {
     });
   }
 
-  const tagBlock = counts.size
-    ? '<div class="tree-head" style="padding-top:12px"><span>标签</span></div>' + renderNodes(root, 0)
-    : '<p class="tree-empty">还没有标签。在卡片上点「标签」添加。</p>';
+  const untagRow = '<div class="tree-node' + (state.uncatOnly ? " is-active" : "") +
+    '" data-action="tree-uncat" style="padding-left:6px"><span class="t-caret"></span>' +
+    '<input type="checkbox" class="t-check" data-action="tree-uncat"' + (state.uncatOnly ? " checked" : "") +
+    ' aria-label="只看没有标签的产物"><span class="t-name">无标签</span>' +
+    '<span class="t-count">' + uncat + "</span></div>";
+  const tagBlock = '<div class="tree-head" style="padding-top:12px"><span>标签</span></div>' + untagRow +
+    (counts.size ? renderNodes(root, 0) : '<p class="tree-empty">还没有标签。在卡片上点「标签」添加。</p>');
   body.innerHTML = sys.join("") + tagBlock;
 }
 
