@@ -997,7 +997,8 @@ function renderTagDraft(cardNode, a) {
     box.insertBefore(sug, box.querySelector(".tag-input"));
   }
   const allPaths = allTagPaths(state.index);
-  const pool = allPaths.filter((t) => !allPaths.some((o) => o !== t && o.indexOf(t + "/") === 0));
+  // 隐藏已被本卡已挂子级覆盖的父级（挂上也会被剪掉）；其余真实存在的标签照常可点。
+  const pool = allPaths.filter((t) => !tags.some((o) => o !== t && o.indexOf(t + "/") === 0));
   if (!pool.length) {
     sug.innerHTML = "";
     return;
@@ -1120,17 +1121,13 @@ function renderTree(idx) {
     ' title="' + esc(a.title || a.slug || "") + '" style="padding-left:' + (18 + depth * 12) + 'px">' +
     '<span class="t-leaf-name">' + esc(label || a.title || a.slug || a.id) + "</span></div>";
   const leafRows = (list, depth) => (list || []).map((a) => leafRow(a, depth)).join("");
-  // 父节点补列：精确命中本节点，或标签在子树下但那个更深节点当前未展开
-  // （父子都展开时同一产物只在更深节点出现，不重复）。
+  // 父节点列出整棵子树：标签精确命中本节点或以本节点路径为前缀的产物都挂在这里，
+  // 同一产物只出现一次；子节点展开后各自再列自己的子树（父节点不再收回）。
   const leavesForNode = (path) => {
     const seen = new Set();
     const out = [];
     arts.forEach((a) => {
-      const hit = (a.tags || []).some((t) => {
-        if (t === path) return true;
-        if (t.indexOf(path + "/") !== 0) return false;
-        return !state.treeExpanded[t];
-      });
+      const hit = (a.tags || []).some((t) => t === path || t.indexOf(path + "/") === 0);
       if (hit && !seen.has(a.id)) {
         seen.add(a.id);
         out.push(a);

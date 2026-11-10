@@ -105,3 +105,37 @@ func TestClearTags(t *testing.T) {
 		t.Errorf("清空后不应再有 tags: %s", rec.Body.String())
 	}
 }
+
+// 父子同传只留子级：归一化在服务端保存路径做，响应与落盘都只有最具体标签。
+func TestSetTagsPrunesCoveredParents(t *testing.T) {
+	srv, key := newTagsServer(t)
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"父子同传", `["架构","架构/平台"]`, `"tags":["架构/平台"]`},
+		{"多级递归", `["a","a/b","a/b/c"]`, `"tags":["a/b/c"]`},
+		{"段级不误伤", `["a","ab"]`, `"tags":["a","ab"]`},
+		{"兄弟并存", `["a/b","a/c"]`, `"tags":["a/b","a/c"]`},
+	}
+	for _, c := range cases {
+		rec := postTags(t, srv, `{"type":"architecture","slug":"under-test","tags":`+c.in+`}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, body=%s", c.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s: 响应未剪枝: %s", c.name, rec.Body.String())
+		}
+		idxRec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(idxRec, httptest.NewRequest(http.MethodGet, "/api/index", nil))
+		if !strings.Contains(idxRec.Body.String(), c.want) {
+			t.Errorf("%s: 索引未带剪枝后的标签: %s", c.name, idxRec.Body.String())
+		}
+	}
+	// 幂等整体替换语义不变：重放同一请求结果一致。
+	rec := postTags(t, srv, `{"type":"architecture","slug":"under-test","tags":["架构","架构/平台"]}`)
+	if !strings.Contains(rec.Body.String(), `"key":"`+key+`"`) || !strings.Contains(rec.Body.String(), `"tags":["架构/平台"]`) {
+		t.Errorf("重放结果不一致: %s", rec.Body.String())
+	}
+}
