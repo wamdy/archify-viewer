@@ -21,7 +21,7 @@ const THEME_KEY = "archify-theme";
 
 const state = {
   index: null,
-  q: "", type: "", roots: [], sort: "mtime",
+  q: "", types: [], roots: [], sort: "mtime",
   status: "loading", // loading | refreshing | ready | error
   error: "",
   loading: false,
@@ -210,7 +210,7 @@ function match(a) {
     const hit = state.tagSel.some((sel) => tags.some((t) => t === sel || t.indexOf(sel + "/") === 0));
     if (!hit) return false;
   }
-  if (state.type && a.type !== state.type) return false;
+  if (state.types.length && state.types.indexOf(a.type) < 0) return false;
   if (state.roots.length && state.roots.indexOf(a.root) < 0) return false;
   if (!state.q) return true;
   const needle = state.q.toLowerCase();
@@ -299,24 +299,25 @@ function syncFilters(idx) {
   if (sig === selectSignature) return; // 搜索输入不再重建下拉框，焦点/展开态不被打断
   selectSignature = sig;
   // 重扫后原筛选值可能已消失：同步回 state，否则「下拉显示全部」却仍按旧值过滤（状态不一致）。
-  if (state.type && !types.includes(state.type)) {
-    state.type = "";
+  const keptTypes = state.types.filter((t) => types.includes(t));
+  if (keptTypes.length !== state.types.length) {
     state.autoCleared.push("「类型」筛选已自动清除");
   }
+  state.types = keptTypes;
   const keptRoots = state.roots.filter((r) => roots.includes(r));
   if (keptRoots.length !== state.roots.length) {
     state.autoCleared.push("「来源」筛选已自动清除");
   }
   state.roots = keptRoots;
-  fillSelect(el("f-type"), types, state.type);
+  fillSelect(el("f-type"), types, state.types.length === 1 ? state.types[0] : "");
   fillSelect(el("f-root"), roots, state.roots.length === 1 ? state.roots[0] : "");
 }
 
-function hasFilter() { return !!(state.q || state.type || state.roots.length || state.tagSel.length || state.uncatOnly); }
+function hasFilter() { return !!(state.q || state.types.length || state.roots.length || state.tagSel.length || state.uncatOnly); }
 function filterSummary() {
   const parts = [];
   if (state.q) parts.push("搜索「" + state.q + "」");
-  if (state.type) parts.push("类型 " + state.type);
+  if (state.types.length) parts.push("类型 " + state.types.join(" 或 "));
   if (state.roots.length) parts.push("来源 " + state.roots.join(" 或 "));
   if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" 或 "));
   if (state.uncatOnly) parts.push("未分类");
@@ -324,7 +325,7 @@ function filterSummary() {
 }
 
 function clearFilters() {
-  state.q = ""; state.type = ""; state.roots = [];
+  state.q = ""; state.types = []; state.roots = [];
   state.tagSel = []; state.uncatOnly = false;
   el("q").value = "";
   el("f-type").value = "";
@@ -1107,7 +1108,7 @@ function renderTree(idx) {
   };
 
   const sys = [];
-  sys.push('<div class="tree-node' + (!state.type && !state.uncatOnly && !state.tagSel.length ? " is-active" : "") +
+  sys.push('<div class="tree-node' + (!state.types.length && !state.uncatOnly && !state.tagSel.length ? " is-active" : "") +
     '" data-action="tree-all" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">全部产物</span>' +
     '<span class="t-count">' + arts.length + "</span></div>");
   sys.push('<div class="tree-node' + (state.uncatOnly ? " is-active" : "") +
@@ -1124,8 +1125,11 @@ function renderTree(idx) {
     sys.push('<div class="tree-children">' + typeKeys.map((t) => {
       const key = "type:" + t;
       const open = !!state.treeExpanded[key];
-      return '<div class="tree-node' + (state.type === t ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
+      const on = state.types.indexOf(t) >= 0;
+      return '<div class="tree-node' + (on ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
         '<span class="t-caret" data-action="tree-expand" data-path="' + esc(key) + '">' + (open ? "▾" : "▸") + "</span>" +
+        '<input type="checkbox" class="t-check" data-action="tree-type" data-type="' + esc(t) + '"' +
+        (on ? " checked" : "") + ' aria-label="按类型 ' + esc(t) + ' 筛选">' +
         '<span class="t-name">' + esc(t) + '</span><span class="t-count">' + types.get(t) + "</span></div>" +
         (open ? leafRows(leavesByType.get(t), 2) : "");
     }).join("") + "</div>");
@@ -1424,7 +1428,10 @@ function onTreeClick(e) {
     return;
   }
   if (act === "tree-type") {
-    state.type = state.type === t.dataset.type ? "" : t.dataset.type;
+    const ty = t.dataset.type || "";
+    const i = state.types.indexOf(ty);
+    if (i >= 0) state.types.splice(i, 1);
+    else state.types.push(ty);
     render();
     return;
   }
@@ -1581,7 +1588,11 @@ function onKeyDown(e) {
 
 function bind() {
   el("q").addEventListener("input", (e) => { state.q = String((e.target && e.target.value) || "").trim(); render(); });
-  el("f-type").addEventListener("change", (e) => { state.type = (e.target && e.target.value) || ""; render(); });
+  el("f-type").addEventListener("change", (e) => {
+    const v = (e.target && e.target.value) || "";
+    state.types = v ? [v] : [];
+    render();
+  });
   el("f-root").addEventListener("change", (e) => {
     const v = (e.target && e.target.value) || "";
     state.roots = v ? [v] : [];
