@@ -3,6 +3,10 @@
 // 写面纪律：本包只写用户配置目录下的 tags.yaml（原子写 + 0600），
 // 绝不触碰 .archify/ 产物——与 internal/config.Editor、internal/thumbs 并列，
 // 是本仓第三个也是最后一个被允许的落盘方。
+//
+// 并发口径：两个实例（gui + run / run + run）可能共用同一配置目录。
+// 所有保存走「tags.yaml.lock 进程间文件锁 + 重读磁盘最新状态 + 合并本次变更」，
+// 整文件重写不再覆盖别的实例刚写的条目；锁由操作系统持有，进程崩溃自动释放。
 package tags
 
 import (
@@ -12,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +28,10 @@ const (
 	MaxPerItem = 20
 	// MaxLen 限制单条标签路径的字符数。
 	MaxLen = 60
+	// lockTimeout 是等待进程间文件锁的上限；超时即放弃保存并报错，不无限等待。
+	lockTimeout = 5 * time.Second
+	// lockPoll 是拿锁失败后的重试间隔。
+	lockPoll = 20 * time.Millisecond
 )
 
 type file struct {
@@ -33,6 +42,8 @@ type file struct {
 // Store 是 tags.yaml 的并发安全视图。
 type Store struct {
 	path string
+	// lockWait 是等待进程间文件锁的上限；独立字段便于测试缩短，生产取 lockTimeout。
+	lockWait time.Duration
 
 	mu   sync.RWMutex
 	data map[string][]string
@@ -45,7 +56,7 @@ func Key(typ, slug string) string {
 
 // NewStore 读取（不存在则视为空表）。文件损坏时返回错误，由调用方降级为「无标签」。
 func NewStore(path string) (*Store, error) {
-	s := &Store{path: path, data: map[string][]string{}}
+	s := &Store{path: path, lockWait: lockTimeout, data: map[string][]string{}}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -71,7 +82,8 @@ func NewStore(path string) (*Store, error) {
 	}
 	if changed {
 		// 旧文件里的冗余父级/非法键在载入时清掉并回写，避免下次保存再把脏数据带出去。
-		if err := s.saveLocked(); err != nil {
+		// 回写同样走文件锁 + 重读合并，别把另一实例刚写的条目盖掉。
+		if err := s.mergeSave(func(map[string][]string) {}); err != nil {
 			return nil, err
 		}
 	}
@@ -116,6 +128,7 @@ func (s *Store) Snapshot() map[string][]string {
 }
 
 // Set 整体替换某产物的标签（幂等）；空列表等于删除该条。
+// 保存前重读磁盘最新状态再合并本次变更，两个实例共用配置目录时互不覆盖。
 func (s *Store) Set(key string, in []string) ([]string, error) {
 	if s == nil {
 		return nil, fmt.Errorf("标签存储未装配")
@@ -124,14 +137,13 @@ func (s *Store) Set(key string, in []string) ([]string, error) {
 		return nil, fmt.Errorf("非法产物键: %q", key)
 	}
 	next := Normalize(in)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(next) == 0 {
-		delete(s.data, key)
-	} else {
-		s.data[key] = next
-	}
-	if err := s.saveLocked(); err != nil {
+	if err := s.mergeSave(func(disk map[string][]string) {
+		if len(next) == 0 {
+			delete(disk, key)
+		} else {
+			disk[key] = next
+		}
+	}); err != nil {
 		return nil, err
 	}
 	out := make([]string, len(next))
@@ -144,30 +156,106 @@ func (s *Store) GC(valid map[string]struct{}) (int, error) {
 	if s == nil {
 		return 0, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	removed := 0
-	for k := range s.data {
-		if _, ok := valid[k]; !ok {
-			delete(s.data, k)
-			removed++
+	err := s.mergeSave(func(disk map[string][]string) {
+		for k := range disk {
+			if _, ok := valid[k]; !ok {
+				delete(disk, k)
+				removed++
+			}
 		}
-	}
-	if removed == 0 {
-		return 0, nil
-	}
-	if err := s.saveLocked(); err != nil {
+	})
+	if err != nil {
 		return removed, err
 	}
 	return removed, nil
 }
 
-func (s *Store) saveLocked() error {
+// mergeSave 是唯一的写盘入口：拿进程间文件锁 → 重读磁盘最新 tags.yaml → 在最新状态上
+// 应用 apply（单产物整体替换 / 孤儿清理 / 载入自愈）→ 原子写回 → 用合并结果刷新内存视图。
+// 锁只罩住「读-改-写」这一小段；文件不存在按空表合并，损坏则报错不写（保留现场）。
+func (s *Store) mergeSave(apply func(disk map[string][]string)) error {
+	release, err := s.acquireLock()
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	disk, err := s.readDisk()
+	if err != nil {
+		return err
+	}
+	apply(disk)
+	if err := s.writeDisk(disk); err != nil {
+		return err
+	}
+	s.data = disk
+	return nil
+}
+
+// readDisk 重读磁盘最新状态并清洗（非法键丢弃、冗余父级剪枝）；文件不存在视为空表。
+// 调用方已持文件锁与 s.mu。
+func (s *Store) readDisk() (map[string][]string, error) {
+	out := map[string][]string{}
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, err
+	}
+	var f file
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("tags.yaml 解析失败: %w", err)
+	}
+	for k, v := range f.Artifacts {
+		if !validKey(k) {
+			continue
+		}
+		out[k] = Normalize(v)
+	}
+	return out, nil
+}
+
+// acquireLock 在 tags.yaml 同目录拿 tags.yaml.lock 的排它锁，超时返回错误。
+// 锁文件永不改名/删除（原子写回替换的是 tags.yaml 本体，不是锁文件），
+// 句柄由操作系统在进程退出时自动释放，崩溃不会留下死锁。
+func (s *Store) acquireLock() (func(), error) {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := openLockFile(s.path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(s.lockWait)
+	for {
+		ok, err := tryLockFile(f)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		if ok {
+			return func() { unlockFile(f); f.Close() }, nil
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("tags.yaml 正被其他实例写入，等待文件锁超时（%s）", s.lockWait)
+		}
+		time.Sleep(lockPoll)
+	}
+}
+
+func (s *Store) writeDisk(data map[string][]string) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	f := file{Version: 1, Artifacts: s.data}
+	f := file{Version: 1, Artifacts: data}
 	if len(f.Artifacts) == 0 {
 		f.Artifacts = map[string][]string{}
 	}

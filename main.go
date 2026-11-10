@@ -215,6 +215,9 @@ func thumbsOption() web.Option {
 // 比可控地回退系统浏览器更糟。recover 后由调用方走既有浏览器回退路径。
 var nativeWindowFactory = desktop.New
 
+// acquireGUISingleInstance 抽出变量便于测试注入；生产直接用 desktop 实现。
+var acquireGUISingleInstance = desktop.AcquireGUISingleInstance
+
 func newNativeWindow(title, url string, width, height int) (win *desktop.Window, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -228,6 +231,19 @@ func newNativeWindow(title, url string, width, height int) (win *desktop.Window,
 func guiCmd(args []string) {
 	fs, lf := newFlagSet("gui")
 	_ = fs.Parse(args)
+
+	// 单实例守卫：已有 gui 在跑则本次直接退出（双击表现为「已有窗口还在」，属预期）。
+	// 守卫自身系统调用失败则降级放行——宁可多开一个实例，也不能因守卫故障打不开。
+	release, acquired, siErr := acquireGUISingleInstance()
+	switch {
+	case siErr != nil:
+		log.Printf("单实例守卫查询异常，降级继续启动: %v", siErr)
+	case !acquired:
+		log.Printf("检测到已有 archify-viewer gui 实例在运行，本次启动退出（窗口可能在托盘，请检查任务栏/托盘）")
+		return
+	default:
+		defer release()
+	}
 
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
