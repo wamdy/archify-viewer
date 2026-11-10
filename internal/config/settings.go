@@ -135,7 +135,8 @@ func (e *Editor) AddRoot(path string) (SettingsView, error) {
 	if len(path) > maxPathLen {
 		return SettingsView{}, errors.New(maxBodyHint)
 	}
-	if _, err := makeRoot(path, ""); err != nil {
+	r, err := makeRoot(path, "")
+	if err != nil {
 		return SettingsView{}, err
 	}
 
@@ -145,13 +146,62 @@ func (e *Editor) AddRoot(path string) (SettingsView, error) {
 		return e.snapshot(), fmt.Errorf("最多配置 %d 处产物根", maxRoots)
 	}
 	want := canonical(path)
+	taken := make(map[string]bool, len(e.raw))
 	for _, r := range e.raw {
 		if canonical(r.Path) == want {
 			return e.snapshot(), errors.New("该目录已在列表中")
 		}
+		taken[r.Label] = true
 	}
-	next := append(append([]fileRoot(nil), e.raw...), fileRoot{Path: path})
+	next := append(append([]fileRoot(nil), e.raw...), fileRoot{Path: path, Label: uniqueLabel(r.Label, taken)})
 	return e.applyLocked(next, e.cfg.CloseActionValue())
+}
+
+// RenameRoot 修改某处产物根的显示名（空名回落为默认名；重名自动退避）。
+func (e *Editor) RenameRoot(path, label string) (SettingsView, error) {
+	label = strings.TrimSpace(label)
+	if len(label) > maxPathLen {
+		return SettingsView{}, errors.New(maxBodyHint)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	want := canonical(path)
+	idx := -1
+	taken := make(map[string]bool, len(e.raw))
+	for i, r := range e.raw {
+		if canonical(r.Path) == want {
+			idx = i
+			continue
+		}
+		taken[r.Label] = true
+	}
+	if idx < 0 {
+		return e.snapshot(), errors.New("目录不在列表中")
+	}
+	if label == "" {
+		label = labelFor(e.raw[idx].Path)
+	}
+	next := append([]fileRoot(nil), e.raw...)
+	next[idx].Label = uniqueLabel(label, taken)
+	return e.applyLocked(next, e.cfg.CloseActionValue())
+}
+
+// uniqueLabel 重名退避：base、base-2、base-3……
+func uniqueLabel(base string, taken map[string]bool) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "未命名"
+	}
+	if !taken[base] {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		cand := fmt.Sprintf("%s-%d", base, i)
+		if !taken[cand] {
+			return cand
+		}
+	}
+	return base + "-" + fmt.Sprint(len(taken)+1)
 }
 
 // RemoveRoot 移除一处产物根；允许全部删空（空库由界面引导）。

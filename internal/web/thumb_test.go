@@ -70,8 +70,8 @@ func TestThumbServesPNGAndCaches(t *testing.T) {
 	if x := rec.Header().Get("X-Content-Type-Options"); x != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q", x)
 	}
-	if !strings.Contains(capt.url, "/a/"+id) {
-		t.Errorf("采集 URL 应指向同源 /a/{id}，实际 %q", capt.url)
+	if !strings.Contains(capt.url, "/s/"+id) {
+		t.Errorf("采集 URL 应指向截图派生视图 /s/{id}，实际 %q", capt.url)
 	}
 
 	// 二次请求命中缓存，不再采集。

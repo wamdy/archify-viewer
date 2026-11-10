@@ -233,7 +233,7 @@ func guiCmd(args []string) {
 	logIndex(idx)
 
 	editor := newSettingsEditor(cfg, lf.configPath)
-	srv, err := web.New(cfg, idx, store, settingsOption(editor), thumbsOption(), tagsOption())
+	srv, err := web.New(cfg, idx, store, settingsOption(editor), thumbsOption(), tagsOption(), web.WithFolderPicker(desktop.PickFolder))
 	if err != nil {
 		reportFatal(err)
 	}
@@ -307,7 +307,7 @@ func runCmd(args []string) {
 	cfg, idx, store := prepare(lf)
 	logIndex(idx)
 
-	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)), thumbsOption(), tagsOption())
+	srv, err := web.New(cfg, idx, store, settingsOption(newSettingsEditor(cfg, lf.configPath)), thumbsOption(), tagsOption(), web.WithFolderPicker(desktop.PickFolder))
 	if err != nil {
 		reportFatal(err)
 	}

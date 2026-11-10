@@ -4,11 +4,41 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"archify-viewer/internal/config"
 )
 
 const maxSettingsBody = 1 << 20 // 与 ssh-tunnel-ui 同口径：限制单个设置请求体大小
+
+// FolderPicker 由 main 注入（gui/run 形态），返回用户选中的目录。
+// 用函数注入而不是直接 import desktop，避免 web 与 desktop 互相依赖。
+type FolderPicker func(title string) (string, error)
+
+// WithFolderPicker 注入原生目录选择能力；未装配时端点返回 503。
+func WithFolderPicker(p FolderPicker) Option {
+	return func(s *Server) { s.pickFolder = p }
+}
+
+func (s *Server) handlePickFolder(w http.ResponseWriter, _ *http.Request) {
+	if s.pickFolder == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":  "picker_unavailable",
+			"detail": "当前形态未装配目录选择（仅 gui / run 支持）",
+		})
+		return
+	}
+	path, err := s.pickFolder("选择 .archify 产物目录")
+	if err != nil {
+		if strings.Contains(err.Error(), "取消") {
+			writeJSON(w, http.StatusOK, map[string]any{"cancelled": true})
+			return
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "picker_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
+}
 
 // SettingsStore 是设置页的写面接口。实现在 internal/config.Editor：
 // web 包只调方法，不出现任何 os.WriteFile / os.Rename / os.MkdirAll（分层红线）。
@@ -16,6 +46,7 @@ type SettingsStore interface {
 	Settings() config.SettingsView
 	AddRoot(path string) (config.SettingsView, error)
 	RemoveRoot(path string) (config.SettingsView, error)
+	RenameRoot(path, label string) (config.SettingsView, error)
 	SetCloseAction(value string) (config.SettingsView, error)
 }
 
@@ -44,6 +75,7 @@ func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action string `json:"action"`
 		Path   string `json:"path"`
+		Label  string `json:"label"`
 	}
 	if err := decodeSettingsBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "detail": err.Error()})
@@ -57,8 +89,10 @@ func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) {
 		view, err = s.settings.AddRoot(body.Path)
 	case "remove":
 		view, err = s.settings.RemoveRoot(body.Path)
+	case "rename":
+		view, err = s.settings.RenameRoot(body.Path, body.Label)
 	default:
-		err = errors.New("action 只能是 add 或 remove")
+		err = errors.New("action 只能是 add / remove / rename")
 	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_root", "detail": err.Error()})

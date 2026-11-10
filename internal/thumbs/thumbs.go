@@ -6,8 +6,8 @@
 //   - viewer 自身不渲染：截图由外部无头浏览器进程完成（见 browser.go），
 //     产物字节在截图前后不变，internal/index 的 TestScanIsReadOnly 继续成立。
 //
-// 并发模型：同一 key 单飞（并发请求共享一次采集），跨 key 全局并发 1
-// （一次翻页滚到 N 张卡也只排一个浏览器进程）。
+// 并发模型：同一 key 单飞（并发请求共享一次采集），跨 key 限并发（默认 3）。
+// 单个采集约 1.7–3.2 秒，串行会让整库首次生成要数分钟；3 路并行在 4 核机器上仍有余量。
 package thumbs
 
 import (
@@ -44,6 +44,9 @@ type Job struct {
 	Theme string
 }
 
+// concurrency 是跨 key 的并行采集上限。
+const concurrency = 3
+
 type call struct {
 	done chan struct{}
 	png  []byte
@@ -71,7 +74,7 @@ func NewStore(dir string, cap Capturer, lg *log.Logger) *Store {
 		cap:   cap,
 		log:   lg,
 		calls: map[string]*call{},
-		sem:   make(chan struct{}, 1),
+		sem:   make(chan struct{}, concurrency),
 	}
 }
 

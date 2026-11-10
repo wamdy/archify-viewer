@@ -21,7 +21,7 @@ const THEME_KEY = "archify-theme";
 
 const state = {
   index: null,
-  q: "", type: "", root: "", sort: "mtime",
+  q: "", type: "", roots: [], sort: "mtime",
   status: "loading", // loading | refreshing | ready | error
   error: "",
   loading: false,
@@ -210,7 +210,7 @@ function match(a) {
     if (!hit) return false;
   }
   if (state.type && a.type !== state.type) return false;
-  if (state.root && a.root !== state.root) return false;
+  if (state.roots.length && state.roots.indexOf(a.root) < 0) return false;
   if (!state.q) return true;
   const needle = state.q.toLowerCase();
   const hay = [a.title, a.subtitle, a.slug, a.rel_path, a.repository, a.type, a.id].join(" ").toLowerCase();
@@ -302,27 +302,28 @@ function syncFilters(idx) {
     state.type = "";
     state.autoCleared.push("「类型」筛选已自动清除");
   }
-  if (state.root && !roots.includes(state.root)) {
-    state.root = "";
+  const keptRoots = state.roots.filter((r) => roots.includes(r));
+  if (keptRoots.length !== state.roots.length) {
     state.autoCleared.push("「来源」筛选已自动清除");
   }
+  state.roots = keptRoots;
   fillSelect(el("f-type"), types, state.type);
-  fillSelect(el("f-root"), roots, state.root);
+  fillSelect(el("f-root"), roots, state.roots.length === 1 ? state.roots[0] : "");
 }
 
-function hasFilter() { return !!(state.q || state.type || state.root || state.tagSel.length || state.uncatOnly); }
+function hasFilter() { return !!(state.q || state.type || state.roots.length || state.tagSel.length || state.uncatOnly); }
 function filterSummary() {
   const parts = [];
   if (state.q) parts.push("搜索「" + state.q + "」");
   if (state.type) parts.push("类型 " + state.type);
-  if (state.root) parts.push("来源 " + state.root);
+  if (state.roots.length) parts.push("来源 " + state.roots.join(" 或 "));
   if (state.tagSel.length) parts.push("标签 " + state.tagSel.join(" 或 "));
   if (state.uncatOnly) parts.push("未分类");
   return parts.join(" · ") || "无条件";
 }
 
 function clearFilters() {
-  state.q = ""; state.type = ""; state.root = "";
+  state.q = ""; state.type = ""; state.roots = [];
   state.tagSel = []; state.uncatOnly = false;
   el("q").value = "";
   el("f-type").value = "";
@@ -421,9 +422,13 @@ function renderSettings() {
       badge.textContent = ORIGIN_LABEL[r.origin] || r.origin || "配置";
       const info = document.createElement("div");
       info.className = "root-info";
-      const label = document.createElement("strong");
-      label.className = "root-label";
-      label.textContent = r.label || "（未命名）";
+      const label = document.createElement("input");
+      label.className = "root-name-input";
+      label.value = r.label || "";
+      label.dataset.path = r.path || "";
+      label.title = "修改显示名（回车保存；重名自动退避）";
+      label.addEventListener("change", () => renameRoot(r.path, label.value));
+      label.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); label.blur(); } });
       const p = document.createElement("code");
       p.className = "root-path";
       p.textContent = r.path || "";
@@ -500,6 +505,21 @@ async function postSettings(url, body, okText, onSuccess) {
       setSettingsBusy(false);
     }
   }
+}
+
+function renameRoot(path, label) {
+  postSettings("/api/settings/roots", { action: "rename", path, label }, "名称已更新", () => {});
+}
+
+function pickRootFolder() {
+  requestJSON("/api/settings/pick-folder", { method: "POST" })
+    .then((j) => {
+      if (!j || j.cancelled || !j.path) return;
+      const input = el("root-path");
+      if (input) input.value = j.path;
+      addRoot();
+    })
+    .catch((err) => toast("打开目录选择失败：" + (err && err.message ? err.message : "网络错误"), "err"));
 }
 
 function addRoot() {
@@ -1041,6 +1061,8 @@ function renderTree(idx) {
         ' style="padding-left:' + (6 + depth * 12) + 'px">' +
         '<span class="t-caret" ' + (hasKids ? 'data-action="tree-expand" data-path="' + esc(child.path) + '"' : "") + '>' +
         (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<input type="checkbox" class="t-check" data-action="tree-filter" data-path="' + esc(child.path) + '"' +
+        (active ? " checked" : "") + ' aria-label="按 ' + esc(child.path) + ' 筛选">' +
         '<span class="t-name">' + esc(child.name) + "</span>" +
         '<span class="t-count">' + (counts.get(child.path) || 0) + "</span></div>";
       if (hasKids && open) out += '<div class="tree-children">' + renderNodes(child, depth + 1) + "</div>";
@@ -1053,7 +1075,9 @@ function renderTree(idx) {
     '" data-action="tree-all" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">全部产物</span>' +
     '<span class="t-count">' + arts.length + "</span></div>");
   sys.push('<div class="tree-node' + (state.uncatOnly ? " is-active" : "") +
-    '" data-action="tree-uncat" style="padding-left:6px"><span class="t-caret"></span><span class="t-name">未分类</span>' +
+    '" data-action="tree-uncat" style="padding-left:6px"><span class="t-caret"></span>' +
+    '<input type="checkbox" class="t-check" data-action="tree-uncat"' + (state.uncatOnly ? " checked" : "") +
+    ' aria-label="只看未分类"><span class="t-name">未分类</span>' +
     '<span class="t-count">' + uncat + "</span></div>");
 
   const typeKeys = [...types.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
@@ -1065,6 +1089,20 @@ function renderTree(idx) {
       '<div class="tree-node' + (state.type === t ? " is-active" : "") + '" data-action="tree-type" data-type="' + esc(t) + '">' +
       '<span class="t-caret"></span><span class="t-name">' + esc(t) + '</span><span class="t-count">' + types.get(t) + "</span></div>"
     ).join("") + "</div>");
+  }
+
+  const rootNames = [...new Set(arts.map((a) => a.root).filter(Boolean))].sort((x, y) => x.localeCompare(y, "zh-CN"));
+  if (rootNames.length > 1) {
+    sys.push('<div class="tree-head" style="padding-top:12px"><span>来源</span></div>');
+    rootNames.forEach((r) => {
+      const n = arts.filter((a) => a.root === r).length;
+      const on = state.roots.indexOf(r) >= 0;
+      sys.push('<div class="tree-node' + (on ? " is-active" : "") + '" data-action="tree-root" data-root="' + esc(r) +
+        '" style="padding-left:6px"><span class="t-caret"></span>' +
+        '<input type="checkbox" class="t-check" data-action="tree-root" data-root="' + esc(r) + '"' + (on ? " checked" : "") +
+        ' aria-label="按来源 ' + esc(r) + ' 筛选"><span class="t-name">' + esc(r) + '</span>' +
+        '<span class="t-count">' + n + "</span></div>");
+    });
   }
 
   const tagBlock = counts.size
@@ -1144,7 +1182,8 @@ function dressFrame(frame) {
     if (!style) {
       style = doc.createElement("style");
       style.id = "viewer-chrome-override";
-      style.textContent = ".toolbar{display:none!important}";
+      // 只藏主题切换：导出/风格/全屏仍归产物自己（查看器已有主题控制）。
+      style.textContent = ".toolbar #btn-theme{display:none!important}";
       (doc.head || doc.documentElement).appendChild(style);
     }
     doc.documentElement.setAttribute("data-theme", resolveTheme(state.theme));
@@ -1308,6 +1347,14 @@ function onTreeClick(e) {
     render();
     return;
   }
+  if (act === "tree-root") {
+    const r = t.dataset.root || "";
+    const i = state.roots.indexOf(r);
+    if (i >= 0) state.roots.splice(i, 1);
+    else state.roots.push(r);
+    render();
+    return;
+  }
   if (act === "tree-uncat") {
     state.uncatOnly = !state.uncatOnly;
     if (state.uncatOnly) state.tagSel = [];
@@ -1450,7 +1497,11 @@ function onKeyDown(e) {
 function bind() {
   el("q").addEventListener("input", (e) => { state.q = String((e.target && e.target.value) || "").trim(); render(); });
   el("f-type").addEventListener("change", (e) => { state.type = (e.target && e.target.value) || ""; render(); });
-  el("f-root").addEventListener("change", (e) => { state.root = (e.target && e.target.value) || ""; render(); });
+  el("f-root").addEventListener("change", (e) => {
+    const v = (e.target && e.target.value) || "";
+    state.roots = v ? [v] : [];
+    render();
+  });
   el("f-sort").addEventListener("change", (e) => { state.sort = (e.target && e.target.value) || "mtime"; render(); });
   el("btn-refresh").addEventListener("click", () => { reload(true); scheduleThumbRefresh([3000, 12000, 30000]); });
   el("btn-rebuild-thumbs").addEventListener("click", onRebuildThumbs);
@@ -1467,6 +1518,7 @@ function bind() {
   el("btn-theme").addEventListener("click", cycleTheme);
   el("btn-settings-back").addEventListener("click", backFromSettings);
   el("btn-root-add").addEventListener("click", addRoot);
+  el("btn-root-pick").addEventListener("click", pickRootFolder);
   el("root-path").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { if (e.preventDefault) e.preventDefault(); addRoot(); }
   });

@@ -55,6 +55,9 @@ type Server struct {
 	// thumbs 是缩略图派生缓存；nil 表示未装配（/t/{id} 返回 thumb_unavailable）。
 	thumbs *thumbs.Store
 
+	// pickFolder 是原生目录选择（main 注入）；nil 表示该形态不支持。
+	pickFolder FolderPicker
+
 	// tags 是手工标签存储；nil 表示未装配（/api/tags 返回 503，索引不带 tags）。
 	tags *tags.Store
 
@@ -84,7 +87,7 @@ func New(cfg *config.Config, idx *index.Index, store *index.Store, opts ...Optio
 		sum := sha256.Sum256(raw)
 		s.etag[name] = `"` + hex.EncodeToString(sum[:8]) + `"`
 	}
-	s.srv = &http.Server{Handler: s.router(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 30 * time.Second}
+	s.srv = &http.Server{Handler: s.router(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 30 * time.Second}
 	return s, nil
 }
 
@@ -96,11 +99,13 @@ func (s *Server) router() http.Handler {
 	mux.HandleFunc("GET /api/index", s.handleIndex)
 	mux.HandleFunc("GET /a/{id}", s.handleArtifact)
 	mux.HandleFunc("GET /t/{id}", s.handleThumb)
+	mux.HandleFunc("GET /s/{id}", s.handleShot)
 	mux.HandleFunc("POST /api/tags", s.handleSetTags)
 	mux.HandleFunc("POST /api/thumbs/rebuild", s.handleRebuildThumbs)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings/roots", s.handleRoots)
 	mux.HandleFunc("POST /api/settings/close-action", s.handleCloseAction)
+	mux.HandleFunc("POST /api/settings/pick-folder", s.handlePickFolder)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return mux
 }

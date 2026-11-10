@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"archify-viewer/internal/index"
@@ -37,7 +38,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	if theme != "dark" {
 		theme = "light"
 	}
-	png, err := st.GetOrCreate(r.Context(), thumbKeyTheme(art, theme), base+"/a/"+art.ID, theme)
+	png, err := st.GetOrCreate(r.Context(), thumbKeyTheme(art, theme), base+"/s/"+art.ID, theme)
 	if err != nil {
 		code := "thumb_failed"
 		if errors.Is(err, thumbs.ErrUnavailable) {
@@ -51,6 +52,36 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(png)
+}
+
+// handleShot 是缩略图专用的派生视图：产物 HTML 原样读取，只在 </head> 前注入一段
+// 样式隐藏自带工具栏与标题块，让截图只剩图形部分。/a/{id} 仍字节原样，不受影响。
+func (s *Server) handleShot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.RLock()
+	art := findArtifact(s.store, id)
+	s.mu.RUnlock()
+	if art == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown_artifact"})
+		return
+	}
+	raw, err := os.ReadFile(art.HTMLPath())
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "artifact_unreadable"})
+		return
+	}
+	const shotStyle = "<style id=\"shot-style\">.toolbar{display:none!important}.header{display:none!important}" +
+		".container{padding-top:10px!important}</style>"
+	html := string(raw)
+	if i := strings.Index(html, "</head>"); i >= 0 {
+		html = html[:i] + shotStyle + html[i:]
+	} else {
+		html = shotStyle + html
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write([]byte(html))
 }
 
 // thumbKey 让缓存随产物内容变化（同路径重生成时 ID 不变、mtime/size 会变）。
@@ -78,7 +109,7 @@ func (s *Server) thumbJobs() []thumbs.Job {
 	jobs := make([]thumbs.Job, 0, len(arts)*2)
 	for _, a := range arts {
 		for _, theme := range []string{"light", "dark"} {
-			jobs = append(jobs, thumbs.Job{Key: thumbKeyTheme(a, theme), URL: base + "/a/" + a.ID, Theme: theme})
+			jobs = append(jobs, thumbs.Job{Key: thumbKeyTheme(a, theme), URL: base + "/s/" + a.ID, Theme: theme})
 		}
 	}
 	return jobs

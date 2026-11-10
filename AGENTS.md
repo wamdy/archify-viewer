@@ -112,6 +112,8 @@ archify-viewer/
   随 `Rescan` 清理陈旧项。写盘只发生在 `internal/thumbs`（`internal/web` 自身仍无写调用）。
   采集用系统 Chrome/Edge **无头进程** + 一次性 profile（不自写 WebView2 COM）；
   无浏览器 ⇒ 404 `thumb_unavailable`，前端保持类型占位，不伪装成功。
+  **截图专用派生视图**：`GET /s/{id}` 在产物 HTML 的 `</head>` 前注入样式隐藏 `.toolbar` 与 `.header`，
+  只截图形部分；`/a/{id}` 仍字节原样。跨 key 并发采集上限 3（`thumbs.concurrency`）。
   **按主题出两张**：缓存键追加 `-light` / `-dark`，`GET /t/{id}?theme=dark` 取深色那张，
   查看器切主题即换一套。深色采集用 `--force-dark-mode` 且**不能同时带 `--virtual-time-budget`**
   （实测会出图但不退出进程），改用 `--timeout=4000` 收口。
