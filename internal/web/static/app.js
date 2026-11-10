@@ -981,18 +981,49 @@ function renderTagDraft(cardNode, a) {
     ? tags.map((t) => '<button class="tag-chip is-on" data-action="tag-del" data-id="' + esc(a.id) + '" data-tag="' + esc(t) + '" title="删除该标签">' + esc(t) + " ×</button>").join("")
     : '<span class="tag-edit-hint">还没有标签。</span>';
 
-  // 已有标签候选：点一下即挂上，避免手敲多级路径
-  const pool = allTagPaths(state.index).filter((t) => tags.indexOf(t) < 0);
+  // 已有标签候选：按 / 分层展示，点名称即挂上；已挂的置灰
   let sug = box.querySelector(".tag-suggest");
   if (!sug) {
     sug = document.createElement("div");
     sug.className = "tag-suggest";
     box.insertBefore(sug, box.querySelector(".tag-input"));
   }
-  sug.innerHTML = pool.length
-    ? '<span class="tag-edit-hint">已有标签：</span>' + pool.slice(0, 40).map((t) =>
-        '<button class="tag-chip tag-sugg" data-action="tag-add" data-id="' + esc(a.id) + '" data-tag="' + esc(t) + '" title="挂上该标签">' + esc(t) + "</button>").join("")
-    : "";
+  const pool = allTagPaths(state.index);
+  if (!pool.length) {
+    sug.innerHTML = "";
+    return;
+  }
+  const root = { children: new Map() };
+  pool.forEach((path) => {
+    const segs = path.split("/");
+    let node = root;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      if (!node.children.has(seg)) {
+        node.children.set(seg, { name: seg, path: segs.slice(0, i + 1).join("/"), children: new Map() });
+      }
+      node = node.children.get(seg);
+    }
+  });
+  const openMap = state.tagDraftOpen || (state.tagDraftOpen = {});
+  const renderSug = (node, depth) => [...node.children.keys()]
+    .sort((x, y) => x.localeCompare(y, "zh-CN"))
+    .map((k) => {
+      const child = node.children.get(k);
+      const hasKids = child.children.size > 0;
+      const open = !!openMap[child.path];
+      const applied = tags.indexOf(child.path) >= 0;
+      return '<div class="tag-sugg-row' + (applied ? " is-applied" : "") + '"' +
+        ' style="padding-left:' + (depth * 12) + 'px">' +
+        '<span class="tag-sugg-caret' + (hasKids ? "" : " is-empty") + '"' +
+        (hasKids ? ' data-action="sugg-expand" data-path="' + esc(child.path) + '"' : "") + ">" +
+        (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<button class="tag-sugg-name" data-action="sugg-add" data-id="' + esc(a.id) + '" data-tag="' + esc(child.path) + '"' +
+        ' title="' + (applied ? "已在该卡片上" : "挂上该标签") + '">' + esc(child.name) + "</button>" +
+        (applied ? '<span class="tag-sugg-flag">已加</span>' : "") + "</div>" +
+        (hasKids && open ? renderSug(child, depth + 1) : "");
+    }).join("");
+  sug.innerHTML = '<div class="tag-suggest-head">已有标签</div>' + renderSug(root, 0);
 }
 
 async function saveTags(a, next) {
@@ -1313,6 +1344,18 @@ function onGridClick(e) {
   else if (t.dataset.action === "tag-filter") toggleTag(t.dataset.tag);
   else if (t.dataset.action === "tag-edit") openTagEditor(t.dataset.id, t);
   else if (t.dataset.action === "thumb-refresh") refreshThumb(t.dataset.id, t);
+  else if (t.dataset.action === "sugg-expand") {
+    const p = t.dataset.path;
+    state.tagDraftOpen = state.tagDraftOpen || {};
+    state.tagDraftOpen[p] = !state.tagDraftOpen[p];
+    const cardNode = t.closest ? t.closest(".card") : null;
+    const a2 = cardNode ? artById(cardNode.querySelector('[data-action="tag-edit"]').dataset.id) : null;
+    if (cardNode && a2) renderTagDraft(cardNode, a2);
+  }
+  else if (t.dataset.action === "sugg-add") {
+    const a2 = artById(t.dataset.id);
+    if (a2 && (a2.tags || []).indexOf(t.dataset.tag) < 0) saveTags(a2, (a2.tags || []).concat([t.dataset.tag]));
+  }
   else if (t.dataset.action === "tag-add") {
     const a = artById(t.dataset.id);
     if (a) saveTags(a, (a.tags || []).concat([t.dataset.tag]));
