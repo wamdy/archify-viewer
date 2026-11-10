@@ -737,6 +737,10 @@ body {
 }
 .tag-filter-panel label:hover { background: var(--surface-2); color: var(--text); }
 .tag-filter-panel .tf-count { margin-left: auto; font-size: 10.5px; color: var(--text-faint); }
+.tf-node { display: flex; align-items: center; gap: 2px; }
+.tf-node label { flex: 1; min-width: 0; }
+.tf-caret { width: 14px; flex-shrink: 0; text-align: center; color: var(--text-faint); cursor: pointer; font-size: 10px; }
+.tf-caret.is-empty { cursor: default; }
 .tag-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .tag-chip {
   font-size: 10.5px; padding: 2px 8px;

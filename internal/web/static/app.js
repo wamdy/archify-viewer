@@ -38,7 +38,8 @@ const state = {
   tagSel: [],        // 搜索栏的标签过滤（多条取交集）
   uncatOnly: false,  // 树里的「未分类」节点
   visible: [],       // 当前可见序列（前后翻的依据）
-  treeExpanded: {},  // 树节点展开状态
+  treeExpanded: {},  // 左栏树展开状态
+  tagPanelExpanded: {}, // 搜索栏标签筛选项的展开状态
   treeCollapsed: false,
   thumbBust: 0,      // 手动重建/重扫后给缩略图 URL 加版本，绕过浏览器内存缓存
   autoCleared: [], // 索引刷新时自动失效的筛选条件，合并进同一次提示，避免被后续提示吞掉
@@ -1168,13 +1169,48 @@ function renderTagFilter(idx) {
     panel.innerHTML = '<p class="tag-edit-hint">还没有标签。在产物卡片上点「标签」添加。</p>';
     return;
   }
-  const arts = (idx && idx.artifacts) || [];
-  panel.innerHTML = paths.map((p) => {
-    const on = state.tagSel.indexOf(p) >= 0;
-    const n = arts.filter((a) => (a.tags || []).indexOf(p) >= 0).length;
-    return '<label title="命中任一已选标签即显示"><input type="checkbox" data-tag="' + esc(p) + '"' +
-      (on ? " checked" : "") + "> <span>" + esc(p) + '</span><span class="tf-count">' + n + "</span></label>";
-  }).join("");
+  // 树形多选：按 `/` 分层，父节点勾选即覆盖整棵子树；展开状态独立于左栏树。
+  const counts = new Map();
+  ((idx && idx.artifacts) || []).forEach((a) => {
+    (a.tags || []).forEach((t) => {
+      const segs = t.split("/");
+      for (let i = 1; i <= segs.length; i++) {
+        const pre = segs.slice(0, i).join("/");
+        counts.set(pre, (counts.get(pre) || 0) + 1);
+      }
+    });
+  });
+  const root = { children: new Map() };
+  counts.forEach((_, path) => {
+    const segs = path.split("/");
+    let node = root;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      if (!node.children.has(seg)) {
+        node.children.set(seg, { name: seg, path: segs.slice(0, i + 1).join("/"), children: new Map() });
+      }
+      node = node.children.get(seg);
+    }
+  });
+  const renderTfNodes = (node, depth) => {
+    const keys = [...node.children.keys()].sort((x, y) => x.localeCompare(y, "zh-CN"));
+    return keys.map((k) => {
+      const child = node.children.get(k);
+      const hasKids = child.children.size > 0;
+      const open = !!state.tagPanelExpanded[child.path];
+      const on = state.tagSel.indexOf(child.path) >= 0;
+      let out = '<div class="tf-node" style="padding-left:' + (4 + depth * 12) + 'px">' +
+        '<span class="tf-caret' + (hasKids ? "" : " is-empty") + '"' +
+        (hasKids ? ' data-action="tf-expand" data-path="' + esc(child.path) + '"' : "") + ">" +
+        (hasKids ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<label title="命中任一已选标签即显示"><input type="checkbox" data-tag="' + esc(child.path) + '"' +
+        (on ? " checked" : "") + "> <span>" + esc(child.name) + '</span>' +
+        '<span class="tf-count">' + (counts.get(child.path) || 0) + "</span></label></div>";
+      if (hasKids && open) out += renderTfNodes(child, depth + 1);
+      return out;
+    }).join("");
+  };
+  panel.innerHTML = renderTfNodes(root, 0);
 }
 
 function renderTagChips() {
@@ -1577,7 +1613,14 @@ function bind() {
   el("btn-tree-toggle").addEventListener("click", toggleTreePanel);
   el("btn-tag-filter").addEventListener("click", toggleTagPanel);
   el("tag-filter-panel").addEventListener("change", onTagPanelChange);
-  el("tag-filter-panel").addEventListener("click", (e) => { if (e.stopPropagation) e.stopPropagation(); });
+  el("tag-filter-panel").addEventListener("click", (e) => {
+    if (e.stopPropagation) e.stopPropagation();
+    const t = targetFor(e, "[data-action]");
+    if (!t || t.dataset.action !== "tf-expand") return;
+    const p = t.dataset.path;
+    state.tagPanelExpanded[p] = !state.tagPanelExpanded[p];
+    renderTagFilter(state.index);
+  });
   el("btn-prev").addEventListener("click", () => gotoNeighbor(-1));
   el("btn-next").addEventListener("click", () => gotoNeighbor(1));
   document.addEventListener("click", closeTagPanel);
