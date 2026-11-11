@@ -34,7 +34,7 @@ import (
 	"archify-viewer/internal/web"
 )
 
-const buildVersion = "0.1.0"
+const buildVersion = "0.2.0"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
