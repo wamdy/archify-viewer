@@ -12,14 +12,14 @@ mkdir -p "$OUT"
 export CGO_ENABLED=0
 
 echo "==> Windows amd64（GUI 子系统，双击无控制台窗口）"
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o "$OUT/archify-viewer-windows-amd64.exe" .
+GOOS=windows GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -H windowsgui" -o "$OUT/archify-viewer-windows-amd64.exe" .
 
 echo "==> Linux amd64"
-GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-linux-amd64" .
+GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-linux-amd64" .
 
 echo "==> macOS arm64 / amd64"
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-darwin-arm64" .
-GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-darwin-amd64" .
+GOOS=darwin GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-darwin-arm64" .
+GOOS=darwin GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$OUT/archify-viewer-darwin-amd64" .
 
 echo "==> checksums"
 (cd "$OUT" && sha256sum archify-viewer-* > SHA256SUMS 2>/dev/null || shasum -a 256 archify-viewer-* > SHA256SUMS)
